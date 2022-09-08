@@ -14,6 +14,10 @@ Vamos tentar usar o git de forma profissional, para isso vamos estabelecer algum
     - `hotfix` - quando um bug esta em master, podemos fazer uma branch diretamente de master e então fazer o pull request diretamente para master, apenas para arrumar algum bug "urgente". EX: `hotfix/<component-name>/fix-regex-for-identify-routes`
     - `feature` - quando vamos subir a feature pela primeira vez. EX: `feature/<component-name>`
     - `enhancement` - quando vamos fazer uma melhoria ou refatoração de código. EX: `enhancement/<component-name>/new-router-system`
+- Ao fazer o commit, sempre digitar uma mensagem do que tem dentro dele de forma reduzida.
+- Ao fazer o pull request, sempre apontamos a nossa branch para `develop` (e não ser que seja um hotfix), e em determinado dia da semana ou mês passamos tudo de develop para `master`.
+- Os pull requests devem ter uma descrição do que foi feito nos commits contidos nela.
+- O pull request não pode ser **mergeado** na branch alvo enquanto não houver pelo menos um **approve** no pull request e todas as conversas do pull request estiverem resolvidas. 
     
 ## Objetivos
  - [ ] Estudar conceitos de OO.
