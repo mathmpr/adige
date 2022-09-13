@@ -2,33 +2,65 @@
 
 namespace Adige\cli;
 
+use Adige\cli\exceptions\AlreadyRegistredCommandException;
+use Adige\cli\exceptions\ClassNotExistsException;
+use Adige\cli\exceptions\MethodIsNotStaticException;
+use Adige\cli\exceptions\MethodNotExistsException;
+use Adige\file\Directory;
+use ReflectionClass;
+
 class Console
 {
-    public $argv;
-    public $argc;
-    public $command;
-    public $command_first;
-    public $command_last;
-    public $parsed_args = [];
+    public array $argv;
+    public int $argc;
+    public string $command;
+    public string $commandFirst;
+    public string $commandLast = '';
+    public array $parsedArgs = [];
 
-    public function __construct()
+    /**
+     * @var Command[]
+     */
+    public static array $commandList = [];
+
+    const DEFAULT_COMMAND = 'default';
+    const NOT_DEFAULT_COMMAND = 'not default';
+
+    public function __construct(array $readDirs = [])
     {
         global $_argv, $_argc;
         if (!$_argv) return;
+        $readDirs = array_unique(array_merge($readDirs, [
+            __DIR__ . '/../'
+        ]));
         array_shift($_argv);
         $this->argv = $_argv;
         $this->argc = $_argc - 1;
+
+        foreach ($readDirs as $dir) {
+            if (is_file($dir) && file_exists($dir)) {
+                include_once $dir;
+                continue;
+            }
+            $directory = new Directory($dir);
+            $extensions = ['php'];
+            foreach ($directory->compact(Directory::COMPACT_FILES, $extensions) as $file) {
+                if ($file->getName() === 'Cli') {
+                    include_once $file->getLocation();
+                }
+            }
+        }
+
         if ($this->argc === 0) {
-            $this->command_list();
+            $this->commandList();
         } else {
             $exp = explode(':', array_shift($this->argv));
+            $this->commandFirst = $exp[0];
             if (count($exp) > 1) {
-                $this->command_first = $exp[0];
-                $this->command_last = $exp[1];
-                $this->command = $this->command_first . '_' . $this->command_last;
+                $this->commandLast = $exp[1];
+                $this->command = $this->commandFirst . ':' . $this->commandLast;
             } else {
-                $this->command_first = $exp[0];
-                $this->command = $this->command_first;
+                $this->command = $this->commandFirst;
             }
 
             foreach ($this->argv as $arg) {
@@ -40,12 +72,25 @@ class Console
                     if (empty($arg_value)) {
                         $arg_value = true;
                     }
-                    $this->parsed_args[$arg_name] = $arg_value;
+                    $this->parsedArgs[$arg_name] = $arg_value;
                 }
             }
 
-            if (method_exists($this, $this->command)) {
-                $method = new \ReflectionMethod($this, $this->command);
+            $foundedCommand = null;
+
+            foreach (static::$commandList as $key => $command) {
+                if (str_starts_with($key, $this->commandFirst)) {
+                    $exp = explode(':', $key);
+                    $this->commandFirst = end($exp);
+                    if($command->isDefault()) $foundedCommand = $command;
+                }
+            }
+
+            if (array_key_exists($this->command, static::$commandList) || $foundedCommand) {
+                if(!$foundedCommand) {
+                    $foundedCommand = static::$commandList[$this->command];
+                }
+                $method = $foundedCommand->getMethod();
                 $params = $method->getParameters();
                 $names = [];
                 $order = [];
@@ -53,56 +98,52 @@ class Console
                     try {
                         $default = $param->getDefaultValue();
                     } catch (\Exception $exception) {
-                        if (!array_key_exists($param->getName(), $this->parsed_args)) {
-                            die("\n\e[0;31mCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\e[0m");
+                        if (!array_key_exists($param->getName(), $this->parsedArgs)) {
+                            die("\n\e[0;31mCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\e[0m\n");
                         }
                     }
 
-                    if (isset($this->parsed_args[$param->getName()])) {
-                        $order[$param->getPosition()] = $this->parsed_args[$param->getName()];
+                    if (isset($this->parsedArgs[$param->getName()])) {
+                        $order[$param->getPosition()] = $this->parsedArgs[$param->getName()];
                     }
 
                     $names[] = $param->getName();
 
                 }
 
-                foreach ($this->parsed_args as $arg_name => $value) {
+                foreach ($this->parsedArgs as $arg_name => $value) {
                     if (!in_array($arg_name, $names)) {
                         die("\n\e[0;31mCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . ".\e[0m");
                     }
                 }
 
-                call_user_func_array([$this, $this->command], $order);
-
+                call_user_func_array([$foundedCommand->getClass(), (!empty($this->commandLast) ? $this->commandLast : $this->commandFirst)], $order);
             } else {
-                if ($this->command_last && method_exists($this, $this->command_first)) {
-                    echo "\n\e[0;31mCommand " . $this->command_first . " is a possible command, but subcommand " . $this->command_last . " is not.\e[0m";
-                    $this->command_list(true);
-                } else {
-                    echo "\n\e[0;31mCommand " . $this->command_first . ":" . $this->command_last . " is a not possible command.\e[0m";
-                    $this->command_list(true);
+                foreach (static::$commandList as $key => $command) {
+                    if (str_starts_with($key, $this->commandFirst)) {
+                        echo "\n\e[0;31mCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.\e[0m";
+                        $this->commandList(true);
+                    }
                 }
+                echo "\n\e[0;31mCommand " . $this->commandFirst . ":" . $this->commandLast . " is a not possible command.\e[0m";
+                $this->commandList(true);
             }
         }
     }
 
-    private function did_you_say()
+    private function didYouSay(): bool
     {
-        $reflection = new \ReflectionClass($this);
-        $methods = $reflection->getMethods();
-        $protected = [];
-        foreach ($methods as $method) {
-            if ($method->isProtected()) $protected[] = $method->getName();
-        }
-
         $percent = 0;
 
         $says = '';
 
-        foreach ($protected as $name) {
-            similar_text($this->command, $name, $percent);
-            if ($percent >= 75) {
-                $says .= "\n* " . str_replace('_', ':', $name);
+        foreach (static::$commandList as $commandObject) {
+            $command = explode(':', $commandObject->getCommand());
+            foreach ($command as $value) {
+                similar_text($this->command, $value, $percent);
+                if ($percent >= 75) {
+                    $says .= "\n* " . str_replace('_', ':', $commandObject->getCommand());
+                }
             }
         }
 
@@ -111,22 +152,116 @@ class Console
             echo "\n*";
             echo $says;
             echo "\n*";
-            echo "\n***********************************\e[0m\n";
+            echo "\n***********************************\e[0m\n\n";
         }
+
+        return !empty($says);
 
     }
 
-    private function command_list($check_possibles = false)
+    private function commandList($check_possibles = false): void
     {
         if ($check_possibles) {
-            echo "\n\n\e[1;32mCheck possible commands below.\e[0m";
-            $this->did_you_say();
+            if (!$this->didYouSay()) {
+                echo "\n\n";
+            }
+            echo "\e[1;32mCheck possible commands below.\e[0m\n\n";
         }
-        die(file_get_contents(__DIR__ . '/cli_commands.txt'));
+        $tab = '  ';
+        $list = '';
+        foreach (static::$commandList as $command => $commandObject) {
+            $command = explode(':', $command);
+            $main = false;
+            if (count($command) > 1) {
+                $main = $command[0];
+                $command = $command[1];
+            } else {
+                $command = $command[0];
+            }
+            if ($main) {
+                $list .= '- ' . $main;
+            }
+            $desc = $commandObject->getDocumentation()['description'];
+            $list .= (!empty($main) ? "\n$tab$tab" : "- ") . $command . ($commandObject->isDefault() ? ' (default command)' : '') . (!empty($desc) ? (": " . $desc) : '') . "\n";
+            $params = $commandObject->getDocumentation()['params'];
+            foreach ($params as $param => $description) {
+                $list .= (!empty($main) ? "$tab$tab$tab" : "\n$tab") . " - " . $param . ": " . $description . (count($params) > 1 ? "\n" : "");
+            }
+        }
+        die($list . "\n\n");
     }
 
-    public function hello() {
-        echo "\n\e[1;32mhello, console works.\e[0m\n";
+    /**
+     * @param $class
+     * @param Command[] $commands
+     * @param ?string $mainCommand
+     * @return void
+     * @throws AlreadyRegistredCommandException|ClassNotExistsException|MethodNotExistsException|MethodIsNotStaticException
+     */
+    public static function addCommands($class, array $commands = [], ?string $mainCommand = null): void
+    {
+        foreach ($commands as $command) {
+            $originalCommand = $command->getCommand();
+            if ($mainCommand) $command->setCommand($mainCommand . ':' . $command->getCommand());
+            if (!$mainCommand && array_key_exists($command->getCommand(), static::$commandList)) {
+                throw new AlreadyRegistredCommandException($command->getCommand());
+            }
+            $command->setClass($class);
+            if (!class_exists($class)) {
+                throw new ClassNotExistsException($class);
+            }
+            $reflection = new ReflectionClass($class);
+            $methods = $reflection->getMethods();
+            $foundedMethod = null;
+            foreach ($methods as $method) {
+                if ($method->getName() === $originalCommand) {
+                    $foundedMethod = $method;
+                }
+            }
+            if (!$foundedMethod) {
+                throw new MethodNotExistsException($originalCommand, $class);
+            }
+            if (!$foundedMethod->isStatic()) {
+                throw new MethodIsNotStaticException($originalCommand, $class);
+            }
+            $documentation = $foundedMethod->getDocComment();
+            $documentation = static::parseDoc($documentation ?? null);
+            $command->setMethod($foundedMethod);
+            $command->setDocumentation($documentation);
+            static::$commandList[$command->getCommand()] = $command;
+        }
+    }
+
+    private static function parseDoc(?string $doc): array
+    {
+        $clear = [
+            'params' => [],
+            'description' => '',
+        ];
+        if ($doc) {
+            $doc = explode("\n", $doc);
+            $endDescription = false;
+            $description = '';
+            foreach ($doc as $key => $line) {
+                if ($key > 0 && $key < (count($doc) - 1)) {
+                    $line = trim(trim(trim($line), '*'));
+                    if (str_starts_with($line, '@')) {
+                        $endDescription = true;
+                        if (str_contains($line, '@param')) {
+                            $exp = explode(' $', $line);
+                            $exp = explode(' ', end($exp));
+                            $param = array_shift($exp);
+                            $param_description = join(' ', $exp);
+                            $clear['params'][$param] = $param_description;
+                        }
+                    } else if (!$endDescription) {
+                        $description .= empty($description) ? $line : "\n" . $line;
+                    }
+                }
+            }
+            $clear['description'] = $description;
+        }
+        return $clear;
     }
 
 }

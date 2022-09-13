@@ -3,5 +3,9 @@
     "psr-4": {
       "Adige\\": "src/"
     }
+  },
+  "require": {
+    "ext-fileinfo": "*",
+    "ext-readline": "*"
   }
 }
