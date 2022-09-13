@@ -8,6 +8,7 @@
     "ext-fileinfo": "*",
     "ext-readline": "*",
     "ext-sockets": "*",
-    "ext-pcntl": "*"
+    "ext-pcntl": "*",
+    "ext-posix": "*"
   }
 }

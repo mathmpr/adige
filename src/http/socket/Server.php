@@ -45,8 +45,7 @@ EOS;
         }
 
         echo 'Server is running on 0.0.0.0:'. $port .', relax.', PHP_EOL;
-        $listening = true;
-        while ($listening) {
+        while (true) {
             $conn = socket_accept($sock);
             if ($conn < 0) {
                 echo 'error: ', socket_strerror($conn), PHP_EOL;
@@ -58,14 +57,12 @@ EOS;
                 if ($pid == -1) {
                     echo 'fork failure: ', PHP_EOL;
                     exit();
-                } else if ($pid == 0) {
-                    $listening = false;
+                } else if (!$pid) {
                     socket_close($sock);
                     $request = '';
                     while (substr($request, -4) !== "\r\n\r\n") {
                         $request .= socket_read($conn, 1024);
                     }
-                    print_r($request);
                     list($code, $headers, $body) = $app($request);
                     $headers += $defaults;
                     if (!isset($headers['Content-Length'])) {
@@ -81,10 +78,16 @@ EOS;
                         $body
                     )));
                     socket_close($conn);
+                    exit;
                 } else {
                     socket_close($conn);
                 }
             }
+
+            while (pcntl_waitpid(0, $status) != -1) {
+                $status = pcntl_wexitstatus($status);
+            }
+
         }
     }
 
