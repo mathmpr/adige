@@ -38,3 +38,13 @@ Vamos tentar usar o git de forma profissional, para isso vamos estabelecer algum
    - [ ] A entrada deve ser a **query** e o **array** com os dados para qualquer operação.
    - [ ] Estudar como funciona um **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm)   
    - [ ] Implementar um query builder.
+
+## Estrutura do projeto e inicialização
+
+Foi adicionado o composer.json na raiz do projeto para permitir o autoload das classes do sistema que vamos construir. Leia o README.md dentro da pasta /src para mais detalhes.
+
+Para iniciar o projeto com o composer é necessário baixar o composer. Para isso entre na pasta raiz desse projeto e depois execute os comandos abaixo disponíveis [nesta página](https://getcomposer.org/download/).
+
+Se tudo der certo na raiz do projeto terá o arquivo `composer.phar`.
+
+Execute os seguintes comandos nessa ordem: `php composer.phar install` e de seguida `php composer.phar dump-autoload`.
