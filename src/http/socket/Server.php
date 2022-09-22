@@ -2,81 +2,120 @@
 
 namespace Adige\http\socket;
 
-class Server {
+use Adige\cli\Output;
+
+class Server
+{
+
+    private string|int $port;
+    private string $content;
+    private int $tick = 0;
 
     /**
      * start php pure web server
-     * @param string $port
+     * @param string|int $port
+     * @return Server
+     */
+    public static function start(string|int $port = 8085): Server
+    {
+        return new self($port);
+    }
+
+    public function __construct(string|int $port)
+    {
+        $this->port = $port;
+        $this->serve();
+    }
+
+    /**
      * @return void
      */
-    public static function start(string $port = '8081'): void {
-        $app = function($request) {
+    public function serve(): void
+    {
+        $app = function ($request) {
             $body = <<<EOS
 <!DOCTYPE html>
 <html>
  <meta charset=utf-8>
  <title>Hello World!</title>
  <h1>Hello World!</h1>
+ <pre>
+ %s
+</pre>
+<form action="http://localhost:$this->port/?opa=opa" method="post">
+    <input type="hidden" name="ok" value="ok">
+    <button type="submit">Sub</button>
+</form>
 </html>
 EOS;
             return array(
                 '200 OK',
                 array('Content-Type' => 'text/html;charset=utf-8'),
-                $body
+                sprintf($body, print_r([$request, $_REQUEST, $_POST, $_GET], true))
             );
         };
 
         $defaults = array(
             'Content-Type' => 'text/html',
-            'Server' => 'PHP '.phpversion()
+            'Server' => 'PHP ' . phpversion()
         );
 
         if (($sock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP)) < 0) {
-            echo 'failed to create socket : ', socket_strerror($sock), PHP_EOL;
+            Output::red("failed to create to socket: " . socket_strerror($sock) . "\n")->output();
             exit();
         }
-        if (($ret = socket_bind($sock, '0.0.0.0', $port)) < 0) {
-            echo 'failed to bind socket : ', socket_strerror($ret), PHP_EOL;
+        if (($ret = socket_bind($sock, '0.0.0.0', $this->port)) < 0) {
+            Output::red("failed to bind to socket: " . socket_strerror($ret) . "\n")->output();
             exit();
         }
         if (($ret = socket_listen($sock, 0)) < 0) {
-            echo 'failed to listent to socket : ', socket_strerror($ret), PHP_EOL;
+            Output::red("failed to listent to socket: " . socket_strerror($ret) . "\n")->output();
             exit();
         }
 
-        echo 'Server is running on 0.0.0.0:'. $port .', relax.', PHP_EOL;
+
+        Output::blue("Server is running on 0.0.0.0:" . $this->port . ", relax.\n")->output();
         while (true) {
+
+            /**
+             * @var $conn \Socket
+             */
+            Output::green("in while\n")->output();
             $conn = socket_accept($sock);
             if ($conn < 0) {
-                echo 'error: ', socket_strerror($conn), PHP_EOL;
-                exit();
+                Output::red("error: " . socket_strerror($conn) . "\n");
+                exit;
             } else if ($conn === false) {
+                Output::yellow("sleeping\n")->output();
                 usleep(100);
             } else {
                 $pid = pcntl_fork();
                 if ($pid == -1) {
-                    echo 'fork failure: ', PHP_EOL;
-                    exit();
+                    Output::red("fork failure.\n");
+                    exit;
                 } else if (!$pid) {
-                    socket_close($sock);
+                    Output::yellow("child\n")->output();
                     $request = '';
-                    while (substr($request, -4) !== "\r\n\r\n") {
-                        $request .= socket_read($conn, 1024);
+                    while (!str_ends_with($request, "\r\n\r\n")) {
+                        $block = socket_read($conn, 8, PHP_NORMAL_READ);
+                        $request .= $block;
                     }
-                    list($code, $headers, $body) = $app($request);
+                    list($code, $headers, $body) = $app(trim($request));
                     $headers += $defaults;
                     if (!isset($headers['Content-Length'])) {
                         $headers['Content-Length'] = strlen($body);
                     }
                     $header = '';
                     foreach ($headers as $k => $v) {
-                        $header .= $k.': '.$v."\r\n";
+                        $header .= $k . ': ' . $v . "\r\n";
                     }
+                    Output::yellow("before write\n")->output();
                     socket_write($conn, implode("\r\n", array(
-                        'HTTP/1.1 '.$code,
+                        'HTTP/1.1 ' . $code,
                         $header,
                         $body
                     )));
+                    Output::yellow("after write\n")->output();
                     socket_close($conn);
                     exit;
                 } else {
@@ -89,7 +128,7 @@ EOS;
             }
 
         }
-    }
 
+    }
 }
 

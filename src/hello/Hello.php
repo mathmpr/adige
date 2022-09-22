@@ -2,10 +2,14 @@
 
 namespace Adige\hello;
 
+use Adige\cli\Output;
+
 class Hello {
 
     public static function hello():void {
-        echo "\n\e[1;34mHello guys, console works fine.\e[0m\n\n";
+        Output::yellow("\nHello guys, console works fine\n\n")
+            ->bgBlue()
+            ->output();
     }
 
 }

@@ -81,13 +81,16 @@ class Console
             foreach (static::$commandList as $key => $command) {
                 if (str_starts_with($key, $this->commandFirst)) {
                     $exp = explode(':', $key);
-                    $this->commandFirst = end($exp);
-                    if($command->isDefault()) $foundedCommand = $command;
+                    $main = array_shift($exp);
+                    if ($this->commandFirst === $main) {
+                        $this->commandFirst = !empty(end($exp)) ? end($exp) : $main;
+                        if ($command->isDefault()) $foundedCommand = $command;
+                    }
                 }
             }
 
             if (array_key_exists($this->command, static::$commandList) || $foundedCommand) {
-                if(!$foundedCommand) {
+                if (!$foundedCommand) {
                     $foundedCommand = static::$commandList[$this->command];
                 }
                 $method = $foundedCommand->getMethod();
@@ -99,7 +102,8 @@ class Console
                         $default = $param->getDefaultValue();
                     } catch (\Exception $exception) {
                         if (!array_key_exists($param->getName(), $this->parsedArgs)) {
-                            die("\n\e[0;31mCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\e[0m\n");
+                            Output::red("\nCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\n")
+                                ->output(true);
                         }
                     }
 
@@ -113,7 +117,8 @@ class Console
 
                 foreach ($this->parsedArgs as $arg_name => $value) {
                     if (!in_array($arg_name, $names)) {
-                        die("\n\e[0;31mCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . ".\e[0m");
+                        Output::red("\nCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . "\n")
+                            ->output(true);
                     }
                 }
 
@@ -121,11 +126,17 @@ class Console
             } else {
                 foreach (static::$commandList as $key => $command) {
                     if (str_starts_with($key, $this->commandFirst)) {
-                        echo "\n\e[0;31mCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.\e[0m";
-                        $this->commandList(true);
+                        $exp = explode(':', $key);
+                        $main = array_shift($exp);
+                        if ($main === $this->commandFirst) {
+                            Output::red("\nCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.")
+                                ->output();
+                            $this->commandList(true);
+                        }
                     }
                 }
-                echo "\n\e[0;31mCommand " . $this->commandFirst . ":" . $this->commandLast . " is a not possible command.\e[0m";
+                Output::red("Command " . $this->commandFirst . ":" . $this->commandLast . " is a not possible command")
+                    ->output();
                 $this->commandList(true);
             }
         }
@@ -148,25 +159,23 @@ class Console
         }
 
         if (!empty($says)) {
-            echo "\n\n\e[1;34m********** Did you say ************";
-            echo "\n*";
-            echo $says;
-            echo "\n*";
-            echo "\n***********************************\e[0m\n\n";
+            Output::blue("\n\n********** Did you say ************\n*" . $says . "\n*\n***********************************\n")
+                ->output();
         }
 
         return !empty($says);
-
     }
 
     private function commandList($check_possibles = false): void
     {
         if ($check_possibles) {
             if (!$this->didYouSay()) {
-                echo "\n\n";
+                echo "\n";
             }
-            echo "\e[1;32mCheck possible commands below.\e[0m\n\n";
         }
+
+        Output::green("\nCheck possible commands below.\n\n")->output();
+
         $tab = '  ';
         $list = '';
         foreach (static::$commandList as $command => $commandObject) {
