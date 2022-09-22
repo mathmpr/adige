@@ -6,6 +6,9 @@
   },
   "require": {
     "ext-fileinfo": "*",
-    "ext-readline": "*"
+    "ext-readline": "*",
+    "ext-sockets": "*",
+    "ext-pcntl": "*",
+    "ext-posix": "*"
   }
 }
