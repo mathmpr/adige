@@ -5,6 +5,8 @@ include 'vendor/autoload.php';
 
 use Adige\cli\Console;
 
+const ADIGE_ROOT = __DIR__ . '/';
+
 global $_argv, $_argc;
 $_argv = $argv;
 $_argc = $argc;
