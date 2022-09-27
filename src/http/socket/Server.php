@@ -147,6 +147,8 @@ class Server
         Output::blue("Server is running on 0.0.0.0:" . $this->port . ", relax.\n")->output();
         while (true) {
 
+            Output::cyan("begin main while\n")->output();
+
             $conn = socket_accept($sock);
 
             if ($conn < 0) {
@@ -164,36 +166,47 @@ class Server
                     $request = '';
 
                     $null = null;
-                    $selects = [$conn];
+                    //$selects = [$conn];
 
-                    socket_select($selects, $null, $null, 5);
+                    //socket_select($selects, $null, $null, 5);
 
+                    Output::red("before while\n")->output();
                     while (!str_ends_with($request, "\r\n\r\n")) {
+                        Output::yellow("before read\n")->output();
                         $block = socket_read($conn, 128, PHP_BINARY_READ);
                         $request .= $block;
                         if (strlen($block) < 128) {
                             break;
                         }
+                        Output::green("after read\n")->output();
                     }
+                    Output::cyan("after while\n")->output();
 
                     socket_write($conn, implode("\r\n", array(
                         'HTTP/1.1 200 OK',
                         implode("\r\n", [
                             "Content-Type: text/html;charset=utf-8",
-                            "Server: PHP 8.1.10"
+                            "Server: PHP 7"
                         ]),
-                        "\r\n" . $this->isolatedContext($conn, $this->parseRequest($request))
+                        "\r\n\r\n" . $this->isolatedContext($conn, $this->parseRequest($request))
                     )));
+                    Output::cyan("after write\n")->output();
                     socket_close($conn);
-                    exit;
+                    Output::cyan("after close conn\n")->output();
+                    unset($conn);
                 } else {
                     socket_close($conn);
+                    unset($conn);
                 }
             }
+
+            Output::cyan("end of main while\n")->output();
 
             while (pcntl_waitpid(0, $status) != -1) {
                 $status = pcntl_wexitstatus($status);
             }
+
+            Output::cyan("end of main while after kill childs\n\n\n\n\n\n")->output();
         }
     }
 }
