@@ -3,26 +3,25 @@
 namespace Adige\cli;
 
 /**
- * @method static black($message = '')
- * @method static red($message = '')
- * @method static green($message = '')
- * @method static yellow($message = '')
- * @method static blue($message = '')
- * @method static magenta($message = '')
- * @method static cyan($message = '')
- * @method static white($message = '')
- * @method static bgBlack($message = '')
- * @method static bgRed($message = '')
- * @method static bgGreen($message = '')
- * @method static bgYellow($message = '')
- * @method static bgBlue($message = '')
- * @method static bgMagenta($message = '')
- * @method static bgCyan($message = '')
- * @method static bgWhite($message = '')
+ * @method static black($message = '', $output = false, $exit = false)
+ * @method static red($message = '', $output = false, $exit = false)
+ * @method static green($message = '', $output = false, $exit = false)
+ * @method static yellow($message = '', $output = false, $exit = false)
+ * @method static blue($message = '', $output = false, $exit = false)
+ * @method static magenta($message = '', $output = false, $exit = false)
+ * @method static cyan($message = '', $output = false, $exit = false)
+ * @method static white($message = '', $output = false, $exit = false)
+ * @method static bgBlack($message = '', $output = false, $exit = false)
+ * @method static bgRed($message = '', $output = false, $exit = false)
+ * @method static bgGreen($message = '', $output = false, $exit = false)
+ * @method static bgYellow($message = '', $output = false, $exit = false)
+ * @method static bgBlue($message = '', $output = false, $exit = false)
+ * @method static bgMagenta($message = '', $output = false, $exit = false)
+ * @method static bgCyan($message = '', $output = false, $exit = false)
+ * @method static bgWhite($message = '', $output = false, $exit = false)
  */
 class Output
 {
-
     private string $message;
     private int $color = 0;
     private int $background = 0;
@@ -58,7 +57,16 @@ class Output
     public static function __callStatic(string $name, array $arguments)
     {
         $object = new self($arguments[0]);
-        return $object->{$name}();
+        if (isset($arguments[1]) && is_bool($arguments[1])) {
+            if (isset($arguments[2]) && is_bool($arguments[2])) {
+                $object->{$name}()->output(true);
+            } else {
+                $object->{$name}()->output();
+            }
+        } else {
+            return $object->{$name}();
+        }
+        return null;
     }
 
     /**
@@ -84,20 +92,11 @@ class Output
             }
         }
         $firstWordPos = stripos($this->message, $firstWord);
-        $lastWordPos = 0;
-        $message = $this->message;
-        while (is_int($pos = stripos($message, $lastWord))) {
-            $lastWordPos = $pos;
-            if ($pos === 0) {
-                $message = str_repeat('@', strlen($lastWord)) . substr($message, strlen($lastWord), strlen($message) - strlen($lastWord));
-            } else {
-                $message = substr($message, 0, $pos) . substr($message, $pos + strlen($lastWord) - 1, (strlen($message) - $pos - strlen($lastWord)));
-            }
-        }
+        $lastWordPos = strrpos($this->message, $lastWord);
         $leftLines = substr_count($this->message, "\n", 0, $firstWordPos);
         $rightLines = substr_count($this->message, "\n", $lastWordPos, (strlen($this->message) - $lastWordPos));
         $message = sprintf($this->style, ($this->background > 0 ? $this->color : 0), ($this->background > 0 ? $this->background : $this->color), trim($this->message));
-        echo str_repeat("\n", $leftLines) . $message . str_repeat("\n", $rightLines);
+        fwrite(STDOUT, str_repeat("\n", $leftLines) . $message . str_repeat("\n", $rightLines));
         if ($exit) exit;
     }
 
