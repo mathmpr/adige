@@ -9,6 +9,7 @@
     "ext-readline": "*",
     "ext-sockets": "*",
     "ext-pcntl": "*",
-    "ext-posix": "*"
+    "ext-posix": "*",
+    "voku/portable-ascii": "^2.0"
   }
 }

@@ -3,211 +3,243 @@
 namespace Adige\http\socket;
 
 use Adige\cli\Output;
-use Exception;
+use Adige\file\File;
 
 class Server
 {
-
     private string|int $port;
     private string $documentRoot;
+    private int $allToIndex;
+    private array $pids = [];
+
+    CONST PID_STATUS_IN_USE = 'in use';
+    CONST PID_STATUS_CLOSED = 'closed';
 
     /**
      * start php pure web server
      * @param string|int $port
-     * @return Server
+     * @return ?Server
      */
-    public static function start(string|int $port = 8085, string $document_root = '/index'): Server
+    public static function start(string|int $port = 8085, int $all_to_index = 0, string $document_root = '/'): ?Server
     {
-        return new self($port, $document_root);
+        return (new self($port, $all_to_index, $document_root))->serve();
     }
 
-    public function __construct(string|int $port, string $documentRoot)
+    public function __construct(string|int $port, int $allToIndex, string $documentRoot)
     {
         $this->port = $port;
         $this->documentRoot = $documentRoot;
-        $this->serve();
+        $this->allToIndex = $allToIndex;
     }
 
-    private function parseRequest(string $request): array
+    public function setPidStatus($pid, $status = self::PID_STATUS_CLOSED): Server
     {
-        $result = [
-            'post' => [],
-            'get' => [],
-        ];
-
-        $content = explode("\r\n\r\n", $request);
-        $requestBody = trim(array_pop($content));
-        $content = explode("\r\n", array_shift($content));
-        $firstLine = trim(array_shift($content));
-        $firstLine = explode(' ', $firstLine);
-        $result['method'] = $firstLine[0];
-        $result['uri'] = $firstLine[1];
-        $get = explode('?', $result['uri']);
-        if(count($get) > 1){
-            parse_str($get[1], $result['get']);
-        }
-        $result['file'] = array_shift($get);
-        $result['headers'] = array_values($content);
-        if (!empty($requestBody)) {
-            try {
-                $body = json_decode($requestBody, true, 512, JSON_THROW_ON_ERROR);
-                $result['post'] = $body;
-            } catch (Exception $exception) {
-                $res = [];
-                parse_str($requestBody, $res);
-                if (!empty($res)) {
-                    $result['post'] = $res;
-                }
-            }
-        }
-        return $result;
+        $this->pids[$pid] = $status;
+        return $this;
     }
 
-    private function isolatedContext($conn, array $request): string
+    private function parseRequest(string $request): Request
+    {
+        return new Request($request);
+    }
+
+    private function isolatedContext(?Connection &$connection = null, ?Request &$request = null, ?Response &$response = null): void
     {
         ob_start();
-        $_REQUEST = array_merge($request['get'], $request['post']);
-        $_GET = $request['get'];
-        $_POST = $request['post'];
+
+        $response->contentHtml();
+
+        $that = $this;
+
+        $_REQUEST = array_merge($request->getGet(), $request->getPost());
+        $_GET = $request->getGet();
+        $_POST = $request->getPost();
         $root = str_replace('//', '/', ADIGE_ROOT . $this->documentRoot . '/');
         $_SERVER = [
-            'headers'       => $request['headers'],
-            'uri'           => $request['uri'],
-            'method'        => $request['method'],
-            'file'          => $request['file'],
-            'document_root' => $root,
+            'HEADERS' => $request->headers,
+            'REQUEST_URI' => $request->getUri(),
+            'REQUEST_METHOD' => $request->getMethod(),
+            'PHP_SELF' => $request->getFile(),
+            'DOCUMENT_ROOT' => $root,
         ];
 
-        if (is_dir($root)){
-            $path = str_replace('//', '/', $root . $request['file']);
+        if (is_dir($root)) {
+            $path = str_replace('//', '/', $root . $request->getFile());
             $index = $root . 'index.php';
-            register_shutdown_function(function() use ($conn){
-                $errfile = "unknown file";
-                $errstr  = "shutdown";
-                $errno   = E_CORE_ERROR;
-                $errline = 0;
+
+            register_shutdown_function(function () use ($connection, $response, $that) {
 
                 $error = error_get_last();
 
-                Output::blue(print_r($error, true))->output();
+                if(ob_get_level()) {
+                    ob_end_clean();
+                }
 
-                if($error !== NULL) {
-                    $errno   = $error["type"];
+                if ($error !== NULL && $connection) {
+                    $errno = $error["type"];
                     $errfile = $error["file"];
                     $errline = $error["line"];
-                    $errstr  = $error["message"];
-                    socket_write($conn, implode("\r\n", array(
-                            'HTTP/1.1 200 OK',
-                            implode("\r\n", [
-                                "Content-Type: text/html;charset=utf-8",
-                                "Server: PHP 8.1.10"
-                            ]),
-                            "\r\n" . "<pre>". print_r([
-                                "type" => $errno,
-                                "file" => $errfile,
-                                "line" => $errline,
-                                "message" => $errstr,
-                            ], true) ."</pre>")
-                    ));
+                    $errstr = $error["message"];
+
+                    $content =
+                        "<pre>" . print_r([
+                            "type" => $errno,
+                            "file" => $errfile,
+                            "line" => $errline,
+                            "message" => $errstr,
+                        ], true) .
+                        "</pre>";
+
+                    $response->contentHtml();
+                    $response->setCode(502);
+                    $response->setContent(trim($content));
+
+                    $connection->write($response, true);
                 }
             });
-            try {
-                if (file_exists($path) && !is_dir($path)) {
-                    include_once $path;
-                } else if(file_exists($index)) {
-                    include_once $index;
-                }
-            } catch (Exception $exception) {
-                Output::red($exception->getMessage() . "\n");
-                Output::yellow($exception->getTraceAsString() . "\n");
-            }
 
+            if (is_dir($path) && file_exists($path . '/index.php')) {
+                $_SERVER['PHP_SELF'] .= '/index.php';
+                $_SERVER['PHP_SELF'] = str_replace('//', '/', $_SERVER['PHP_SELF']);
+                $path .= '/index.php';
+                require $path;
+            } else {
+                if (file_exists($path) && !is_dir($path)) {
+                    require $path;
+                } else if (file_exists($index) && $this->allToIndex > 0) {
+                    $_SERVER['PHP_SELF'] .= 'index.php';
+                    $_SERVER['PHP_SELF'] = str_replace('//', '/', $_SERVER['PHP_SELF']);
+                    require $index;
+                } else {
+                    $response->setCode(404);
+                    $response->setContent('<h1>404 not found</h1>');
+                }
+            }
         }
-        return ob_get_clean();
+
+        $response->appendContent(ob_get_clean());
     }
 
     /**
-     * @return void
+     * @return ?Server
      */
-    public function serve(): void
+    public function serve(): ?Server
     {
-        if (($sock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP)) < 0) {
-            Output::red("failed to create to socket: " . socket_strerror($sock) . "\n")->output(true);
-            exit();
-        }
-        if (($ret = socket_bind($sock, '0.0.0.0', $this->port)) < 0) {
-            Output::red("failed to bind to socket: " . socket_strerror($ret) . "\n")->output(true);
-            exit();
-        }
-        if (($ret = socket_listen($sock, 0)) < 0) {
-            Output::red("failed to listent to socket: " . socket_strerror($ret) . "\n")->output(true);
-            exit();
-        }
+        $error = '';
+        $errorMessage = '';
+        $stream = stream_socket_server(
+            "tcp://0.0.0.0:{$this->port}",
+            $error,
+            $errorMessage,
+            STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+            stream_context_create([
+                'socket' => [
+                    'tcp_nodelay' => false,
+                ]
+            ]));
 
-        Output::blue("Server is running on 0.0.0.0:" . $this->port . ", relax.\n")->output();
-        while (true) {
+        if ($stream) {
 
-            Output::cyan("begin main while\n")->output();
+            stream_set_read_buffer($stream, 4096);
+            stream_set_blocking($stream, 0);
 
-            $conn = socket_accept($sock);
+            while (true) {
 
-            if ($conn < 0) {
-                Output::red("error: " . socket_strerror($conn) . "\n");
-                exit;
-            } else if ($conn === false) {
-                Output::yellow("sleeping\n")->output();
-                usleep(100);
-            } else {
-                $pid = pcntl_fork();
-                if ($pid == -1) {
-                    Output::red("fork failure.\n");
-                    exit;
-                } else if (!$pid) {
-                    $request = '';
+                $client = @stream_socket_accept($stream, 120);
 
-                    $null = null;
-                    //$selects = [$conn];
-
-                    //socket_select($selects, $null, $null, 5);
-
-                    Output::red("before while\n")->output();
-                    while (!str_ends_with($request, "\r\n\r\n")) {
-                        Output::yellow("before read\n")->output();
-                        $block = socket_read($conn, 128, PHP_BINARY_READ);
-                        $request .= $block;
-                        if (strlen($block) < 128) {
-                            break;
-                        }
-                        Output::green("after read\n")->output();
-                    }
-                    Output::cyan("after while\n")->output();
-
-                    socket_write($conn, implode("\r\n", array(
-                        'HTTP/1.1 200 OK',
-                        implode("\r\n", [
-                            "Content-Type: text/html;charset=utf-8",
-                            "Server: PHP 7"
-                        ]),
-                        "\r\n\r\n" . $this->isolatedContext($conn, $this->parseRequest($request))
-                    )));
-                    Output::cyan("after write\n")->output();
-                    socket_close($conn);
-                    Output::cyan("after close conn\n")->output();
-                    unset($conn);
+                if ($client === false) {
+                    Output::yellow("after 120 secconds no clients are connected\n", true);
+                    usleep(100);
                 } else {
-                    socket_close($conn);
-                    unset($conn);
+                    $pid = pcntl_fork();
+                    if ($pid == -1) {
+                        Output::red("fork main PID to child PID failed.\n", true);
+                        exit;
+                    } else if (!$pid) {
+
+                        $pid = getmypid();
+
+                        $this->pids[$pid] = self::PID_STATUS_IN_USE;
+
+                        $connection = new Connection($client, $pid, $this);
+                        $request = $connection->read();
+
+                        if (empty(trim($request))) {
+                            $connection->close();
+                            continue;
+                        }
+
+                        Output::yellow("request recevied at " . date("Y-m-d H:i:s.u") . "\n", true);
+
+                        $root = trim(str_replace('//', '/', ADIGE_ROOT . $this->documentRoot . '/')) . '/';
+
+                        $request = $this->parseRequest($request);
+                        $response = new Response();
+
+                        $file = new File(str_replace('//', '/', $root . $request->getFile()));
+
+                        if ($file->exists()) {
+
+                            $totalSize = filesize($file->getLocation());
+
+                            $response->headers->setHeaders([
+                                "accept-ranges" => "bytes",
+                                "content-type" => File::ext2mime($file->getExtension()),
+                                "content-length" => $totalSize,
+                            ]);
+
+                            if (!is_null($request->headers->range)) {
+                                $bytes = explode('-', str_replace('bytes=', '', $request->headers->range));
+                                $from = intval(trim($bytes[0]));
+                                $to = $totalSize;
+
+                                if (!empty($bytes[1])) {
+                                    $to = intval($bytes[1]);
+                                }
+
+                                if ($from > 0 && empty(trim($bytes[1]))) {
+                                    $length = $totalSize - $from;
+                                } else {
+                                    $length = $to - $from;
+                                }
+
+                                $response->setCode(206);
+                                $response->headers->contentLength = $length;
+                                $response->headers->contentRange = "bytes $from-" . ($to - 1) . "/$totalSize";
+
+                                $fopen = fopen($file->getLocation(), 'r');
+                                fseek($fopen, $from);
+                                $response->setContent(fread($fopen, $length));
+                                fclose($fopen);
+
+                            } else {
+                                $response->setContent(file_get_contents($file->getLocation()));
+                            }
+
+                            $connection->write($response, true);
+                            continue;
+                        }
+
+                        $this->isolatedContext($connection, $request, $response);
+
+                        $connection->write($response, true);
+                    }
+                }
+
+                while (pcntl_waitpid(0, $status) != -1) {
+                    $status = pcntl_wexitstatus($status);
                 }
             }
-
-            Output::cyan("end of main while\n")->output();
-
-            while (pcntl_waitpid(0, $status) != -1) {
-                $status = pcntl_wexitstatus($status);
-            }
-
-            Output::cyan("end of main while after kill childs\n\n\n\n\n\n")->output();
         }
+        return $this;
+    }
+
+    /**
+     * @return array
+     */
+    public function getPids(): array
+    {
+        return $this->pids;
     }
 }
 

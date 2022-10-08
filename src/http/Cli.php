@@ -10,7 +10,7 @@ use Adige\cli\Exceptions\MethodIsNotStaticException;
 
 try {
     Console::addCommands(Server::class, [
-        new Command('start', [], Console::DEFAULT_COMMAND)
+        new Command('start', [], Console::DEFAULT_COMMAND),
     ], 'serve');
 } catch (AlreadyRegistredCommandException $alreadyRegistredCommandException) {
     die($alreadyRegistredCommandException->getMessage());

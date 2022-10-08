@@ -13,11 +13,15 @@ class Directory
     const COMPACT_FILES = File::class;
     const COMPACT_DIRECTORIES = Directory::class;
 
-    public function __construct($location)
+    public function __construct($location, $createIfNotExists = false)
     {
         $this->location = str_replace('\\', '/', $location);
         $name = explode('/', $this->location);
         $this->name = array_pop($name);
+        if (!$this->exists() && $createIfNotExists) {
+            return $this->create();
+        }
+        return $this;
     }
 
     /**
@@ -103,15 +107,20 @@ class Directory
                 $result[] = $item;
             }
             if (get_class($item) === File::class && ($get === Directory::COMPACT_FILES || $get === Directory::COMPACT_ALL)) {
-                if(empty($extensions) || in_array($item->getExtension(), $extensions)) {
+                if (empty($extensions) || in_array($item->getExtension(), $extensions)) {
                     $result[] = $item;
                 }
             }
-            if($recursion) {
+            if ($recursion) {
                 $result = array_merge($result, $recursion);
             }
         }
         return $result;
+    }
+
+    public function create(): Directory
+    {
+        return $this;
     }
 
 }

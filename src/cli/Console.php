@@ -69,7 +69,7 @@ class Console
                     $arg_name = array_shift($exp);
                     $arg_name = str_replace(['---', '--', '-'], '', $arg_name);
                     $arg_value = join('=', $exp);
-                    if (empty($arg_value)) {
+                    if ($arg_value === "") {
                         $arg_value = true;
                     }
                     $this->parsedArgs[$arg_name] = $arg_value;
@@ -108,7 +108,32 @@ class Console
                     }
 
                     if (isset($this->parsedArgs[$param->getName()])) {
-                        $order[$param->getPosition()] = $this->parsedArgs[$param->getName()];
+                        $type = $param->getType();
+                        if ($type) {
+                            if ($type && get_class($type) === \ReflectionUnionType::class) {
+                                $type = $param->getType()->getTypes()[0]->getName();
+                            } else {
+                                $type = $param->getType()->getName();
+                            }
+                        } else {
+                            $type = 'string';
+                        }
+                        $value = $this->parsedArgs[$param->getName()];
+                        $cast = [
+                            'bool' => function () use ($value) {
+                                return boolval($value);
+                            },
+                            'int' => function () use ($value) {
+                                return intval($value);
+                            },
+                            'string' => function () use ($value) {
+                                return (string)($value);
+                            },
+                            'float' => function () use ($value) {
+                                return floatval($value);
+                            },
+                        ];
+                        $order[$param->getPosition()] = $cast[$type]();
                     }
 
                     $names[] = $param->getName();
@@ -178,6 +203,7 @@ class Console
 
         $tab = '  ';
         $list = '';
+        print_r(static::$commandList);
         foreach (static::$commandList as $command => $commandObject) {
             $command = explode(':', $command);
             $main = false;
