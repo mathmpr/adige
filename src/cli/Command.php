@@ -8,7 +8,7 @@ class Command {
 
     private string $command;
     private array $params;
-    private bool $default;
+    private string $default;
     private string $class;
     private array $documentation = [];
     private ?ReflectionMethod $method = null;
@@ -61,14 +61,14 @@ class Command {
      */
     public function isDefault(): bool
     {
-        return $this->default;
+        return $this->default === Console::DEFAULT_COMMAND;
     }
 
     /**
-     * @param bool $default
+     * @param string $default
      * @return Command
      */
-    public function setDefault(bool $default): Command
+    public function setDefault(string $default = Console::DEFAULT_COMMAND): Command
     {
         $this->default = $default;
         return $this;

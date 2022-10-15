@@ -11,4 +11,6 @@ global $_argv, $_argc;
 $_argv = $argv;
 $_argc = $argc;
 
-new Console();
+new Console([
+    './peoples/matheus/'
+]);

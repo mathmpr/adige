@@ -203,7 +203,6 @@ class Console
 
         $tab = '  ';
         $list = '';
-        print_r(static::$commandList);
         foreach (static::$commandList as $command => $commandObject) {
             $command = explode(':', $command);
             $main = false;
@@ -238,7 +237,7 @@ class Console
         foreach ($commands as $command) {
             $originalCommand = $command->getCommand();
             if ($mainCommand) $command->setCommand($mainCommand . ':' . $command->getCommand());
-            if (!$mainCommand && array_key_exists($command->getCommand(), static::$commandList)) {
+            if (array_key_exists($command->getCommand(), static::$commandList)) {
                 throw new AlreadyRegistredCommandException($command->getCommand());
             }
             $command->setClass($class);
