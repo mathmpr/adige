@@ -102,8 +102,7 @@ class Console
                         $default = $param->getDefaultValue();
                     } catch (\Exception $exception) {
                         if (!array_key_exists($param->getName(), $this->parsedArgs)) {
-                            Output::red("\nCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\n")
-                                ->output(true);
+                            Output::red("\nCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\n", Output::INSTANT);
                         }
                     }
 
@@ -142,8 +141,7 @@ class Console
 
                 foreach ($this->parsedArgs as $arg_name => $value) {
                     if (!in_array($arg_name, $names)) {
-                        Output::red("\nCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . "\n")
-                            ->output(true);
+                        Output::red("\nCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . "\n", Output::INSTANT);
                     }
                 }
 
@@ -154,14 +152,12 @@ class Console
                         $exp = explode(':', $key);
                         $main = array_shift($exp);
                         if ($main === $this->commandFirst) {
-                            Output::red("\nCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.")
-                                ->output();
+                            Output::red("\nCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.", Output::INSTANT);
                             $this->commandList(true);
                         }
                     }
                 }
-                Output::red("Command " . $this->commandFirst . ":" . $this->commandLast . " is a not possible command")
-                    ->output();
+                Output::red("Command " . $this->commandFirst . ":" . $this->commandLast . " is a not possible command", Output::INSTANT);
                 $this->commandList(true);
             }
         }
@@ -184,8 +180,7 @@ class Console
         }
 
         if (!empty($says)) {
-            Output::blue("\n\n********** Did you say ************\n*" . $says . "\n*\n***********************************\n")
-                ->output();
+            Output::blue("\n\n********** Did you say ************\n*" . $says . "\n*\n***********************************\n", Output::INSTANT);
         }
 
         return !empty($says);
@@ -199,7 +194,7 @@ class Console
             }
         }
 
-        Output::green("\nCheck possible commands below.\n\n")->output();
+        Output::green("\nCheck possible commands below.\n\n", Output::INSTANT);
 
         $tab = '  ';
         $list = '';

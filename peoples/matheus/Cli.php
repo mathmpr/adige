@@ -10,6 +10,6 @@ try{
         new Command('init'),
     ], 'matheus');
 } catch (Exception $exception) {
-    Output::red($exception->getMessage() . "\n", true, true);
+    Output::red($exception->getMessage() . "\n", Output::INSTANT, Output::DIE);
 }
 

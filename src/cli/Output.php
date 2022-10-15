@@ -3,26 +3,29 @@
 namespace Adige\cli;
 
 /**
- * @method static black($message = '', $output = false, $exit = false)
- * @method static red($message = '', $output = false, $exit = false)
- * @method static green($message = '', $output = false, $exit = false)
- * @method static yellow($message = '', $output = false, $exit = false)
- * @method static blue($message = '', $output = false, $exit = false)
- * @method static magenta($message = '', $output = false, $exit = false)
- * @method static cyan($message = '', $output = false, $exit = false)
- * @method static white($message = '', $output = false, $exit = false)
- * @method static bgBlack($message = '', $output = false, $exit = false)
- * @method static bgRed($message = '', $output = false, $exit = false)
- * @method static bgGreen($message = '', $output = false, $exit = false)
- * @method static bgYellow($message = '', $output = false, $exit = false)
- * @method static bgBlue($message = '', $output = false, $exit = false)
- * @method static bgMagenta($message = '', $output = false, $exit = false)
- * @method static bgCyan($message = '', $output = false, $exit = false)
- * @method static bgWhite($message = '', $output = false, $exit = false)
+ * @method static black(...$outputs)
+ * @method static red(...$outputs)
+ * @method static green(...$outputs)
+ * @method static yellow(...$outputs)
+ * @method static blue(...$outputs)
+ * @method static magenta(...$outputs)
+ * @method static cyan(...$outputs)
+ * @method static white(...$outputs)
+ * @method static bgBlack(...$outputs)
+ * @method static bgRed(...$outputs)
+ * @method static bgGreen(...$outputs)
+ * @method static bgYellow(...$outputs)
+ * @method static bgBlue(...$outputs)
+ * @method static bgMagenta(...$outputs)
+ * @method static bgCyan(...$outputs)
+ * @method static bgWhite(...$outputs)
  */
 class Output
 {
-    private string $message;
+    public const INSTANT = __CLASS__ . ':instant output';
+    public const DIE = __CLASS__ . ':kill execution';
+
+    private string|array|object|int|bool|float $message;
     private int $color = 0;
     private int $background = 0;
     private string $style = "\e[%s;%sm%s\e[0m";
@@ -50,19 +53,40 @@ class Output
 
     public function __construct($message)
     {
+        if (!is_scalar($message)) {
+            $message = trim(print_r($message, true));
+        }
         $this->message = $message;
         $this->color = $this->colors['green'];
     }
 
     public static function __callStatic(string $name, array $arguments)
     {
-        $object = new self($arguments[0]);
-        if (isset($arguments[1]) && is_bool($arguments[1])) {
-            if (isset($arguments[2]) && is_bool($arguments[2])) {
-                $object->{$name}()->output(true);
-            } else {
-                $object->{$name}()->output();
+        $instantOutput = false;
+        $die = false;
+        $message = '';
+        foreach ($arguments as $argument) {
+            if ($argument === static::INSTANT) {
+                $instantOutput = true;
+                continue;
             }
+            if ($argument === static::DIE) {
+                $die = true;
+                continue;
+            }
+
+            if (!is_scalar($argument)) {
+                $message .= print_r($argument, true);
+            } else {
+                $message .= $argument;
+            }
+        }
+
+        $object = new self($message);
+        if ($instantOutput && $die) {
+            $object->{$name}()->output(true);
+        } else if ($instantOutput) {
+            $object->{$name}()->output();
         } else {
             return $object->{$name}();
         }

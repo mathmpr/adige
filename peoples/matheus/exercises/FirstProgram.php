@@ -8,7 +8,7 @@ class FirstProgram {
 
     static function init():void
     {
-        Output::cyan("Hello World\n", true);
+        Output::cyan("Hello World\n", Output::INSTANT);
     }
 
 }
