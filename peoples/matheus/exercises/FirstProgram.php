@@ -2,13 +2,12 @@
 
 namespace peoples\matheus\exercises;
 
-use Adige\cli\Output;
+use Adige\cli\OutputLn;
 
 class FirstProgram {
 
     static function init():void
     {
-        Output::cyan("Hello World\n", Output::INSTANT);
+        OutputLn::cyan("Hello World");
     }
-
 }
