@@ -148,12 +148,12 @@ class Server
                 $client = @stream_socket_accept($stream, 120);
 
                 if ($client === false) {
-                    Output::yellow("after 120 secconds no clients are connected\n", true);
+                    Output::yellow("after 120 secconds no clients are connected\n", Output::INSTANT);
                     usleep(100);
                 } else {
                     $pid = pcntl_fork();
                     if ($pid == -1) {
-                        Output::red("fork main PID to child PID failed.\n", true);
+                        Output::red("fork main PID to child PID failed.\n", Output::INSTANT);
                         exit;
                     } else if (!$pid) {
 
@@ -169,7 +169,7 @@ class Server
                             continue;
                         }
 
-                        Output::yellow("request recevied at " . date("Y-m-d H:i:s.u") . "\n", true);
+                        Output::yellow("request recevied at " . date("Y-m-d H:i:s.u") . "\n", Output::INSTANT);
 
                         $root = trim(str_replace('//', '/', ADIGE_ROOT . $this->documentRoot . '/')) . '/';
 

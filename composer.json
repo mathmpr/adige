@@ -1,15 +1,18 @@
 {
   "autoload": {
     "psr-4": {
-      "Adige\\": "src/"
+      "Adige\\": "src/",
+      "peoples\\": "peoples/"
     }
   },
   "require": {
     "ext-fileinfo": "*",
     "ext-readline": "*",
     "ext-sockets": "*",
-    "ext-pcntl": "*",
-    "ext-posix": "*",
     "voku/portable-ascii": "^2.0"
+  },
+  "suggest": {
+    "ext-pcntl": "*",
+    "ext-posix": "*"
   }
 }

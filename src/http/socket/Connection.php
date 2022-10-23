@@ -35,7 +35,7 @@ class Connection
             stream_set_write_buffer($this->client, 1024);
             if(stream_socket_sendto($this->client, (string)$data)) {
                 if ($close) {
-                    Output::blue("server send response at " . date("Y-m-d H:i:s.u") . "\n", true);
+                    Output::blue("server send response at " . date("Y-m-d H:i:s.u") . "\n", Output::INSTANT);
                     $this->close();
                 }
                 return true;
