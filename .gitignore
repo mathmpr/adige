@@ -27,3 +27,4 @@ Homestead.json
 composer.phar
 tmp/
 tmp/*
+peoples/*/private

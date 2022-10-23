@@ -20,13 +20,21 @@ Vamos tentar usar o git de forma profissional, para isso vamos estabelecer algum
 - O pull request não pode ser **mergeado** na branch alvo enquanto não houver pelo menos um **approve** no pull request e todas as conversas do pull request estiverem resolvidas. 
     
 ## Objetivos
+ - [x] Declarando váriaveis em PHP, tipagem, conceito de refrência e cópia
+ - [x] Lexica, semântica e sintaxe (visão geral sobre a linguagem)
+ - [x] Criar diretório pessoal para realizar exercicios e arquivos privados
+ - [x] Operadores matemáticos
+ - [ ] Arrays (listas) e funções para array
+ - [ ] Funções, callbacks
+ - [ ] Include, require, include once e require once
+ - [ ] Namespace de forma detalhada
  - [ ] Estudar conceitos de OO.
-   - [ ] O que é um objeto e o que é uma classe.
-   - [ ] Entendendo os níveis de acesso `public`, `private` e `protected`.
-   - [ ] Diferenças entre métodos estáticos e não estáticos. Entender as propriedades também.
-   - [ ] Como funciona o conceito de herança.
-   - [ ] Como funciona o conceito de interface.
-   - [ ] Como funciona o conceito para classes abstratas.
+    - [ ] O que é um objeto e o que é uma classe.
+    - [ ] Entendendo os níveis de acesso `public`, `private` e `protected`.
+    - [ ] Diferenças entre métodos estáticos e não estáticos. Entender as propriedades também.
+    - [ ] Como funciona o conceito de herança.
+    - [ ] Como funciona o conceito de interface.
+    - [ ] Como funciona o conceito para classes abstratas.
  - [ ] Estudar os conceitos de [DDD](https://engsoftmoderna.info/artigos/ddd.html).
  - [ ] Criar um componente para **router** para permitir chamadas dos métodos HTTP: GET; POST; OPTIONS; PUT; DELETE.
    - [ ] Estudar o método HTTP.
@@ -34,10 +42,10 @@ Vamos tentar usar o git de forma profissional, para isso vamos estabelecer algum
    - [ ] Implementar algo similar ao básico do **slim** permitindo grupos de rotas.
    - [ ] Permitir **auto discover** route baseado na URI.
    - [ ] Implementar middleware.
-- [ ] Criar componente base para fazer operações basicas e dinamicas no banco de dados MySQL.
-   - [ ] A entrada deve ser a **query** e o **array** com os dados para qualquer operação.
-   - [ ] Estudar como funciona um **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm)   
-   - [ ] Implementar um query builder.
+ - [ ] Criar componente base para fazer operações basicas e dinamicas no banco de dados MySQL.
+    - [ ] A entrada deve ser a **query** e o **array** com os dados para qualquer operação.
+    - [ ] Estudar como funciona um **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm)   
+    - [ ] Implementar um query builder.
 
 ## Estrutura do projeto e inicialização
 
