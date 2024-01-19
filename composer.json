@@ -1,5 +1,7 @@
 {
   "name": "trentino-alto/adige",
+  "version": "0.1.0",
+  "type": "package",
   "description": "Adige is a experimental PHP framework for building web applications.",
   "keywords": [
     "php",
