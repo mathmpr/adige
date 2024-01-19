@@ -2,6 +2,8 @@
 
 namespace Adige\cli;
 
+use Adige\core\BaseObject;
+
 /**
  * @method static black($message = '')
  * @method static red($message = '')
@@ -20,7 +22,7 @@ namespace Adige\cli;
  * @method static bgCyan($message = '')
  * @method static bgWhite($message = '')
  */
-class Output
+class Output extends BaseObject
 {
 
     private string $message;
@@ -53,6 +55,7 @@ class Output
     {
         $this->message = $message;
         $this->color = $this->colors['green'];
+        parent::__construct();
     }
 
     public static function __callStatic(string $name, array $arguments)
@@ -89,16 +92,31 @@ class Output
         while (is_int($pos = stripos($message, $lastWord))) {
             $lastWordPos = $pos;
             if ($pos === 0) {
-                $message = str_repeat('@', strlen($lastWord)) . substr($message, strlen($lastWord), strlen($message) - strlen($lastWord));
+                $message = str_repeat('@', strlen($lastWord)) . substr(
+                        $message,
+                        strlen($lastWord),
+                        strlen($message) - strlen($lastWord)
+                    );
             } else {
-                $message = substr($message, 0, $pos) . substr($message, $pos + strlen($lastWord) - 1, (strlen($message) - $pos - strlen($lastWord)));
+                $message = substr($message, 0, $pos) . substr(
+                        $message,
+                        $pos + strlen($lastWord) - 1,
+                        (strlen($message) - $pos - strlen($lastWord))
+                    );
             }
         }
         $leftLines = substr_count($this->message, "\n", 0, $firstWordPos);
         $rightLines = substr_count($this->message, "\n", $lastWordPos, (strlen($this->message) - $lastWordPos));
-        $message = sprintf($this->style, ($this->background > 0 ? $this->color : 0), ($this->background > 0 ? $this->background : $this->color), trim($this->message));
+        $message = sprintf(
+            $this->style,
+            ($this->background > 0 ? $this->color : 0),
+            ($this->background > 0 ? $this->background : $this->color),
+            trim($this->message)
+        );
         echo str_repeat("\n", $leftLines) . $message . str_repeat("\n", $rightLines);
-        if ($exit) exit;
+        if ($exit) {
+            exit;
+        }
     }
 
     public function __call(string $name, array $arguments): Output

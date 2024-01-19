@@ -1,14 +1,36 @@
 {
+  "name": "trentino-alto/adige",
+  "description": "Adige is a experimental PHP framework for building web applications.",
+  "keywords": [
+    "php",
+    "framework",
+    "web",
+    "mvc"
+  ],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Matheus Prado Rodrigues",
+      "email": "matheus@mathmpr.com"
+    }
+  ],
+  "minimum-stability": "dev",
   "autoload": {
     "psr-4": {
-      "Adige\\": "src/"
+      "Adige\\": "src/",
+      "app\\": "app/"
     }
   },
   "require": {
+    "php": "^8.2",
     "ext-fileinfo": "*",
     "ext-readline": "*",
     "ext-sockets": "*",
     "ext-pcntl": "*",
-    "ext-posix": "*"
+    "ext-posix": "*",
+    "ext-mbstring": "*",
+    "ext-ctype": "*",
+    "voku/portable-ascii": "^2.0",
+    "larapack/dd": "1.*"
   }
 }

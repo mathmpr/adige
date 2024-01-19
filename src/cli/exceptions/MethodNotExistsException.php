@@ -2,10 +2,10 @@
 
 namespace Adige\cli\exceptions;
 
-use Exception;
+use Adige\core\BaseException;
 use Throwable;
 
-class MethodNotExistsException extends Exception
+class MethodNotExistsException extends BaseException
 {
     public function __construct(string $method = "", $class = "", int $code = 0, ?Throwable $previous = null)
     {

@@ -2,11 +2,12 @@
 
 namespace Adige\cli;
 
-use Adige\cli\exceptions\AlreadyRegistredCommandException;
+use Adige\cli\exceptions\AlreadyRegisteredCommandException;
 use Adige\cli\exceptions\ClassNotExistsException;
 use Adige\cli\exceptions\MethodIsNotStaticException;
 use Adige\cli\exceptions\MethodNotExistsException;
 use Adige\file\Directory;
+use JetBrains\PhpStorm\NoReturn;
 use ReflectionClass;
 
 class Console
@@ -29,7 +30,9 @@ class Console
     public function __construct(array $readDirs = [])
     {
         global $_argv, $_argc;
-        if (!$_argv) return;
+        if (!$_argv) {
+            return;
+        }
         $readDirs = array_unique(array_merge($readDirs, [
             __DIR__ . '/../'
         ]));
@@ -84,7 +87,9 @@ class Console
                     $main = array_shift($exp);
                     if ($this->commandFirst === $main) {
                         $this->commandFirst = !empty(end($exp)) ? end($exp) : $main;
-                        if ($command->isDefault()) $foundedCommand = $command;
+                        if ($command->isDefault()) {
+                            $foundedCommand = $command;
+                        }
                     }
                 }
             }
@@ -102,7 +107,13 @@ class Console
                         $default = $param->getDefaultValue();
                     } catch (\Exception $exception) {
                         if (!array_key_exists($param->getName(), $this->parsedArgs)) {
-                            Output::red("\nCommand " . str_replace('_', ':', $this->command) . " require a missing parameter: " . $param->getName() . "\n")
+                            Output::red(
+                                "\nCommand " . str_replace(
+                                    '_',
+                                    ':',
+                                    $this->command
+                                ) . " require a missing parameter: " . $param->getName() . "\n"
+                            )
                                 ->output(true);
                         }
                     }
@@ -112,24 +123,37 @@ class Console
                     }
 
                     $names[] = $param->getName();
-
                 }
 
                 foreach ($this->parsedArgs as $arg_name => $value) {
                     if (!in_array($arg_name, $names)) {
-                        Output::red("\nCommand " . str_replace('_', ':', $this->command) . " have a unregognized argument: " . $arg_name . "\n")
+                        Output::red(
+                            "\nCommand " . str_replace(
+                                '_',
+                                ':',
+                                $this->command
+                            ) . " have a unrecognized argument: " . $arg_name . "\n"
+                        )
                             ->output(true);
                     }
                 }
 
-                call_user_func_array([$foundedCommand->getClass(), (!empty($this->commandLast) ? $this->commandLast : $this->commandFirst)], $order);
+                call_user_func_array(
+                    [
+                        $foundedCommand->getClass(),
+                        (!empty($this->commandLast) ? $this->commandLast : $this->commandFirst)
+                    ],
+                    $order
+                );
             } else {
                 foreach (static::$commandList as $key => $command) {
                     if (str_starts_with($key, $this->commandFirst)) {
                         $exp = explode(':', $key);
                         $main = array_shift($exp);
                         if ($main === $this->commandFirst) {
-                            Output::red("\nCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not.")
+                            Output::red(
+                                "\nCommand " . $this->commandFirst . " is a possible command, but subcommand " . $this->commandLast . " is not."
+                            )
                                 ->output();
                             $this->commandList(true);
                         }
@@ -159,14 +183,20 @@ class Console
         }
 
         if (!empty($says)) {
-            Output::blue("\n\n********** Did you say ************\n*" . $says . "\n*\n***********************************\n")
+            Output::blue(
+                "\n\n********** Did you say ************\n*" . $says . "\n*\n***********************************\n"
+            )
                 ->output();
         }
 
         return !empty($says);
     }
 
-    private function commandList($check_possibles = false): void
+    /**
+     * @param bool $check_possibles
+     * @return void
+     */
+    #[NoReturn] private function commandList(bool $check_possibles = false): void
     {
         if ($check_possibles) {
             if (!$this->didYouSay()) {
@@ -191,10 +221,13 @@ class Console
                 $list .= '- ' . $main;
             }
             $desc = $commandObject->getDocumentation()['description'];
-            $list .= (!empty($main) ? "\n$tab$tab" : "- ") . $command . ($commandObject->isDefault() ? ' (default command)' : '') . (!empty($desc) ? (": " . $desc) : '') . "\n";
+            $list .= (!empty($main) ? "\n$tab$tab" : "- ") . $command . ($commandObject->isDefault(
+                ) ? ' (default command)' : '') . (!empty($desc) ? (": " . $desc) : '') . "\n";
             $params = $commandObject->getDocumentation()['params'];
             foreach ($params as $param => $description) {
-                $list .= (!empty($main) ? "$tab$tab$tab" : "\n$tab") . " - " . $param . ": " . $description . (count($params) > 1 ? "\n" : "");
+                $list .= (!empty($main) ? "$tab$tab$tab" : "\n$tab") . " - " . $param . ": " . $description . (count(
+                        $params
+                    ) > 1 ? "\n" : "");
             }
         }
         die($list . "\n\n");
@@ -205,15 +238,17 @@ class Console
      * @param Command[] $commands
      * @param ?string $mainCommand
      * @return void
-     * @throws AlreadyRegistredCommandException|ClassNotExistsException|MethodNotExistsException|MethodIsNotStaticException
+     * @throws AlreadyRegisteredCommandException|ClassNotExistsException|MethodNotExistsException|MethodIsNotStaticException
      */
     public static function addCommands($class, array $commands = [], ?string $mainCommand = null): void
     {
         foreach ($commands as $command) {
             $originalCommand = $command->getCommand();
-            if ($mainCommand) $command->setCommand($mainCommand . ':' . $command->getCommand());
+            if ($mainCommand) {
+                $command->setCommand($mainCommand . ':' . $command->getCommand());
+            }
             if (!$mainCommand && array_key_exists($command->getCommand(), static::$commandList)) {
-                throw new AlreadyRegistredCommandException($command->getCommand());
+                throw new AlreadyRegisteredCommandException($command->getCommand());
             }
             $command->setClass($class);
             if (!class_exists($class)) {
@@ -225,6 +260,7 @@ class Console
             foreach ($methods as $method) {
                 if ($method->getName() === $originalCommand) {
                     $foundedMethod = $method;
+                    break;
                 }
             }
             if (!$foundedMethod) {
@@ -263,8 +299,10 @@ class Console
                             $param_description = join(' ', $exp);
                             $clear['params'][$param] = $param_description;
                         }
-                    } else if (!$endDescription) {
-                        $description .= empty($description) ? $line : "\n" . $line;
+                    } else {
+                        if (!$endDescription) {
+                            $description .= empty($description) ? $line : "\n" . $line;
+                        }
                     }
                 }
             }

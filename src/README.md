@@ -1,7 +1,7 @@
-## Padrão da estrutura
+## Structure pattern
 
-Dentro dessa pasta podemos adicionar novas pasta, estas são as partes do sistema. Se quisermos criar uma classe para gerir as rotas.
+Within this folder we can add new folders, these are the parts of the system. If we want to create a class to manage routes.
 
-`src/http/Router.php` teriamos o namespace `Adige\http` e nos arquivos PHP onde quisermos usar essa classe `Router` vamos colocar no topo do arquivo: `use Agide\http\Router`.
+`src/http/Router.php` we would have the namespace `Adige\http` and in the PHP files where we want to use this `Router` class we will put it at the top of the file: `use Agide\http\Router`.
 
-Sempre que uma nova classe for criada é bom executarmos na raiz do projeto: `php composer.phar dump-autoload`.
+Whenever a new class is created, it is a good idea to run it at the root of the project: `php composer.phar dump-autoload`.

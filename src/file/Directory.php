@@ -2,7 +2,9 @@
 
 namespace Adige\file;
 
-class Directory
+use Adige\core\BaseObject;
+
+class Directory extends BaseObject
 {
     private string $location;
     private string $name;
@@ -15,9 +17,10 @@ class Directory
 
     public function __construct($location)
     {
-        $this->location = str_replace('\\', '/', $location);
+        $this->location = str_replace(['\\', '//'], ['/', '/'], $location);
         $name = explode('/', $this->location);
         $this->name = array_pop($name);
+        parent::__construct();
     }
 
     /**
@@ -61,7 +64,8 @@ class Directory
 
     public function addContent($name): void
     {
-        $location = str_ends_with($this->getLocation(), '/') ? ($this->getLocation() . $name) : ($this->getLocation() . '/' . $name);
+        $location = str_ends_with($this->getLocation(), '/') ? ($this->getLocation() . $name) : ($this->getLocation(
+            ) . '/' . $name);
         if (is_dir($location)) {
             $this->content[] = (new Directory($location))->read();
         } else {
@@ -99,19 +103,28 @@ class Directory
             if (get_class($item) === Directory::class) {
                 $recursion = $item->compact($get, $extensions);
             }
-            if (get_class($item) === Directory::class && ($get === Directory::COMPACT_DIRECTORIES || $get === Directory::COMPACT_ALL)) {
+            if (get_class(
+                    $item
+                ) === Directory::class && ($get === Directory::COMPACT_DIRECTORIES || $get === Directory::COMPACT_ALL)) {
                 $result[] = $item;
             }
-            if (get_class($item) === File::class && ($get === Directory::COMPACT_FILES || $get === Directory::COMPACT_ALL)) {
-                if(empty($extensions) || in_array($item->getExtension(), $extensions)) {
+            if (get_class(
+                    $item
+                ) === File::class && ($get === Directory::COMPACT_FILES || $get === Directory::COMPACT_ALL)) {
+                if (empty($extensions) || in_array($item->getExtension(), $extensions)) {
                     $result[] = $item;
                 }
             }
-            if($recursion) {
+            if ($recursion) {
                 $result = array_merge($result, $recursion);
             }
         }
         return $result;
+    }
+
+    public function locationToNamespace(string $ignore = ''): string
+    {
+        return str_replace([$ignore, '/'], ['', '\\'], $this->location);
     }
 
 }

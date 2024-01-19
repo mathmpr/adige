@@ -2,9 +2,11 @@
 
 namespace Adige\cli;
 
+use Adige\core\BaseObject;
 use ReflectionMethod;
 
-class Command {
+class Command extends BaseObject
+{
 
     private string $command;
     private array $params;
@@ -18,6 +20,7 @@ class Command {
         $this->command = $command;
         $this->params = $params;
         $this->default = $default;
+        parent::__construct();
     }
 
     /**

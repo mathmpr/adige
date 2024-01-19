@@ -2,10 +2,10 @@
 
 namespace Adige\cli\exceptions;
 
-use Exception;
+use Adige\core\BaseException;
 use Throwable;
 
-class AlreadyRegistredCommandException extends Exception
+class AlreadyRegisteredCommandException extends BaseException
 {
     public function __construct(string $command = "", int $code = 0, ?Throwable $previous = null)
     {
