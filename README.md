@@ -1,7 +1,7 @@
 # Ádige
 Project aimed at studying the PHP and MySQL languages mainly, which can cover JS, HTML, CSS. The objective is to create, step by step, a simple Framework based on the most popular ones on the market.
 
-## Sobre
+## About
 
 Adige is the second-largest river in Italy, it was and still is one of the most important rivers in the country since the Middle Ages. The river gives its name to the Trentino-Alto Adige region. The name of the project is just a tribute to the memories of a trip that one of the collaborators (@mathmpr) took to this region of Italy.
 
