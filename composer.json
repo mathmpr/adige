@@ -21,7 +21,10 @@
     "psr-4": {
       "Adige\\": "src/",
       "app\\": "app/"
-    }
+    },
+    "files": [
+      "src/helpers/functions.php"
+    ]
   },
   "require": {
     "php": "^8.2",
