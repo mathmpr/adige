@@ -3,11 +3,10 @@
 namespace app\controllers;
 
 use Adige\core\controller\Controller;
-use Adige\http\http\Response;
 
 class IndexController extends Controller
 {
-    public function actionIndex(): Response
+    public function actionIndex()
     {
         return respond([
             'hello' => 'world',

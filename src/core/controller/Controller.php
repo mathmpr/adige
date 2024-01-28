@@ -75,4 +75,14 @@ class Controller extends BaseObject
         return respond($content, $statusCode, $headers);
     }
 
+    public function afterAction($action, $result)
+    {
+
+    }
+
+    public function beforeAction($action)
+    {
+        
+    }
+
 }

@@ -179,7 +179,18 @@ class Route extends BaseObject
             $controller = new ReflectionClass($this->controller);
             $method = $controller->getMethod($this->action);
             $parameters = $this->buildArgs($method);
-            return $method->invokeArgs($this->controller, $parameters);
+            $beforeAction = $controller->getMethod('beforeAction');
+            $returnBefore = $beforeAction->invokeArgs($this->controller, [$this->action]);
+            if (!is_null($returnBefore)) {
+                return $returnBefore;
+            }
+            $returnValue = $method->invokeArgs($this->controller, $parameters);
+            $afterAction = $controller->getMethod('afterAction');
+            $returnAfter = $afterAction->invokeArgs($this->controller, [$this->action, $returnValue]);
+            if (!is_null($returnAfter)) {
+                return $returnAfter;
+            }
+            return $returnValue;
         }
         return null;
     }

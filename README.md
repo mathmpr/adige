@@ -34,10 +34,10 @@ Let's try to use git in a professional way, for this we will establish some rule
    - [x] Implement something similar to the basics of **slim** allowing groups of routes.
    - [x] Allow **auto discover** route based on URI.
    - [x] Implement middleware.
-- [ ] Create base component to perform basic and dynamic operations on the MySQL database.
-   - [ ] The input must be the **query** and the **array** with the data for any operation.
-   - [ ] Study how a **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm) works
-   - [ ] Implement a query builder.
+- [x] Create base component to perform basic and dynamic operations on the MySQL database.
+   - [x] The input must be the **query** and the **array** with the data for any operation.
+   - [x] Study how a **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm) works
+   - [x] Implement a query builder.
 
 ## Project structure and startup
 

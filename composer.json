@@ -35,6 +35,7 @@
     "ext-posix": "*",
     "ext-mbstring": "*",
     "ext-ctype": "*",
+    "ext-pdo": "*",
     "voku/portable-ascii": "^2.0",
     "larapack/dd": "1.*"
   }

@@ -26,3 +26,4 @@ Homestead.json
 .idea
 composer.phar
 composer.lock
+schema.json

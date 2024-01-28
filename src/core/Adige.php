@@ -52,23 +52,8 @@ class Adige extends BaseObject
         static::$response = new Response();
         static::$router = new Router(static::$request, static::$response);
         ob_start();
-        $string = '';
         $response = static::$router->run();
-        if (ob_get_level() > 0) {
-            $string = ob_get_clean();
-        }
-        if ($response instanceof Response) {
-            static::$response = $response;
-        } elseif (is_array($response)) {
-            static::$response->getHeaders()->setHeader('Content-Type', 'application/json');
-            static::$response->setBody(json_encode($response) . $string);
-        } elseif (is_string($response)) {
-            static::$response->setBody($response . $string);
-        } elseif (is_object($response)) {
-            static::$response->setBody(json_encode($response) . $string);
-        } else {
-            static::$response->setBody($string);
-        }
+        respond($response, static::$response->getStatusCode());
         static::$response->dispatch();
     }
 }
