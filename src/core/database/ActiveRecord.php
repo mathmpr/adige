@@ -60,7 +60,7 @@ abstract class ActiveRecord extends BaseObject
      * @param array $options
      * @throws BaseException
      */
-    public function __construct(array $props, array $options = [])
+    public function __construct(array $props = [], array $options = [])
     {
         $this->options = $options;
         $this->init();

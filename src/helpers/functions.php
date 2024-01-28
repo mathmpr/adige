@@ -8,6 +8,9 @@ use Adige\core\collection\Collection;
 function respond(string|array|object $content, int $statusCode = 200, array $headers = []): Response
 {
     $string = '';
+    if ($content instanceof Response) {
+        return $content;
+    }
     if (ob_get_level() > 0) {
         $string = ob_get_clean();
     }

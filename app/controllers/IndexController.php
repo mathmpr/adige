@@ -3,6 +3,7 @@
 namespace app\controllers;
 
 use Adige\core\controller\Controller;
+use Adige\core\database\ActiveRecord;
 
 class IndexController extends Controller
 {
