@@ -6,7 +6,7 @@ use Adige\hello\Hello;
 
 try {
     Console::addCommands(Hello::class, [
-        new Command('hello', [], Console::DEFAULT_COMMAND)
+        new Command('hello', Console::DEFAULT_COMMAND)
     ]);
 } catch (Throwable $exception) {
     die($exception->getMessage());

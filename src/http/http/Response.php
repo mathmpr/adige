@@ -3,6 +3,7 @@
 namespace Adige\http\http;
 
 use Adige\core\BaseObject;
+use Adige\file\File;
 
 class Response extends BaseObject
 {
@@ -31,7 +32,7 @@ class Response extends BaseObject
 
     protected ?Headers $headers;
 
-    protected ?string $body = null;
+    protected string|null|File $body = null;
 
     public function __construct(int $statusCode = 200, array $headers = [])
     {
@@ -96,7 +97,7 @@ class Response extends BaseObject
         return $this->body;
     }
 
-    public function setBody(?string $body): Response
+    public function setBody(string|null|File $body): Response
     {
         $this->body = $body;
         return $this;
@@ -108,7 +109,12 @@ class Response extends BaseObject
         foreach ($this->headers->getHeaders() as $name => $value) {
             header($name . ': ' . $value);
         }
-        echo $this->body;
+        if (is_string($this->body)){
+            echo $this->body;
+        }
+        if ($this->body instanceof File) {
+            readfile($this->body->getLocation());
+        }
     }
 
 }

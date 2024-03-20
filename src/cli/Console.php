@@ -34,7 +34,8 @@ class Console
             return;
         }
         $readDirs = array_unique(array_merge($readDirs, [
-            __DIR__ . '/../'
+            ROOT . 'app/',
+            ROOT . 'src/',
         ]));
         array_shift($_argv);
         $this->argv = $_argv;
@@ -309,6 +310,11 @@ class Console
             $clear['description'] = $description;
         }
         return $clear;
+    }
+
+    public static function isCli(): bool
+    {
+        return str_contains(php_sapi_name(), 'cli');
     }
 
 }

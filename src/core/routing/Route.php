@@ -161,12 +161,14 @@ class Route extends BaseObject
      */
     public function handle(): string|array|object|null
     {
-        for ($x = 0; $x <= $this->groupedInIndex; $x++) {
-            $middleware = self::$groupMiddleware[$x] ?? null;
-            if ($middleware) {
-                $return = $middleware->handle(Adige::$request, Adige::$response);
-                if ($return instanceof Response) {
-                    return $return;
+        if ($this->groupedInIndex) {
+            for ($x = 0; $x <= $this->groupedInIndex; $x++) {
+                $middleware = self::$groupMiddleware[$x] ?? null;
+                if ($middleware) {
+                    $return = $middleware->handle(Adige::$request, Adige::$response);
+                    if ($return instanceof Response) {
+                        return $return;
+                    }
                 }
             }
         }
@@ -205,13 +207,17 @@ class Route extends BaseObject
         $request = Adige::$request;
         $parameters = [];
         foreach ($method->getParameters() as $parameter) {
+            $get = $request->get($parameter->getName());
             if ($parameter->isDefaultValueAvailable()) {
-                $parameters[$parameter->getName()] = $request->get($parameter->getName()) ??
-                    $parameter->getDefaultValue() ?? null;
+                $parameters[$parameter->getName()] = $get
+                    ? determine_var($get)
+                    : $parameter->getDefaultValue() ?? null;
             } elseif ($parameter->isOptional()) {
-                $parameters[$parameter->getName()] = $request->get($parameter->getName()) ?? null;
+                $parameters[$parameter->getName()] = $get
+                    ? determine_var($get)
+                    : null;
             } elseif (isset($request->get()[$parameter->getName()])) {
-                $parameters[$parameter->getName()] = $request->get($parameter->getName());
+                $parameters[$parameter->getName()] = $get;
             } else {
                 throw new RequiredParamNotFound($this->controller);
             }

@@ -15,7 +15,9 @@ class File extends BaseObject
     public function __construct($location)
     {
         $this->location = str_replace('\\', '/', $location);
-        $this->mimeType = mime_content_type($this->location);
+        $this->mimeType = file_exists($this->location)
+            ? mime_content_type($this->location)
+            : null;
         $extension = explode('.', $this->location);
         $this->extension = strtolower(array_pop($extension));
         $name = explode('/', join('.', $extension));
@@ -50,6 +52,9 @@ class File extends BaseObject
      */
     public function getMimeType(): bool|string|null
     {
+        if ($this->mimeType === null && $this->exists()) {
+            $this->mimeType = mime_content_type($this->location);
+        }
         return $this->mimeType;
     }
 

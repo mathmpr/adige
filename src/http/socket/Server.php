@@ -11,16 +11,22 @@ class Server extends BaseObject
 
     private string|int $port;
 
+    private string $host;
+
     private string|int $documentRoot = './';
 
     /**
      * start php pure web server
      * @param string|int $port which port will the server listen to (default is 8080)
+     * @param string $host which host will the server listen to (default is localhost)
      * @param string $document_root the document root where is located your index.php (default is ./)
      * @return Server
      */
-    public static function start(string|int $port = 8080, string $document_root = './'): Server
-    {
+    public static function start(
+        string|int $port = 8080,
+        string $host = 'localhost',
+        string $document_root = './'
+    ): Server {
         $originalPort = $port;
         $port = self::checkIfPortIsBusy($port);
         if ($port !== $originalPort) {
@@ -28,12 +34,13 @@ class Server extends BaseObject
                 ->bgRed()
                 ->output();
         }
-        return new self($port, $document_root);
+        return new self($port, $host, $document_root);
     }
 
-    public function __construct(string|int $port, string $document_root = './')
+    public function __construct(string|int $port, string $host, string $document_root = './')
     {
         $this->port = $port;
+        $this->host = $host;
         $this->documentRoot = $document_root;
         $this->serve();
         parent::__construct();
@@ -44,9 +51,9 @@ class Server extends BaseObject
      */
     public function serve(): void
     {
-        Output::green("Server started at http://localhost:" . $this->port . "\n")
+        Output::green("Server started at http://" . $this->host . ":" . $this->port . "\n")
             ->output();
-        exec('php -S localhost:' . $this->port . ' -t ' . ROOT . $this->documentRoot);
+        exec('php -S ' . $this->host . ':' . $this->port . ' -t ' . ROOT . $this->documentRoot);
     }
 
     /**
@@ -58,24 +65,24 @@ class Server extends BaseObject
     {
         $commands = [
             BaseEnvironment::SO_WINDOWS => [
-                'netstat'    => [
+                'netstat' => [
                     'command' => "netstat -an | find \"LISTENING\" | find \":%s\"",
-                    'eval'    => 'return $result == 0;',
+                    'eval' => 'return $result == 0;',
                 ],
                 'powershell' => [
                     'command' => "powershell Get-NetTCPConnection -LocalPort %s",
-                    'eval'    => 'return !empty($output);'
+                    'eval' => 'return !empty($output);'
                 ],
 
             ],
-            BaseEnvironment::SO_LINUX   => [
+            BaseEnvironment::SO_LINUX => [
                 'netstat' => [
                     'command' => "netstat -an | grep \":%s\"",
-                    'eval'    => 'return $result == 0;',
+                    'eval' => 'return $result == 0;',
                 ],
-                'ss'      => [
+                'ss' => [
                     'command' => "ss -tln | grep \":%s\"",
-                    'eval'    => 'return $result == 0;'
+                    'eval' => 'return $result == 0;'
                 ]
             ],
         ];

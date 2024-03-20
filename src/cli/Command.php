@@ -9,16 +9,14 @@ class Command extends BaseObject
 {
 
     private string $command;
-    private array $params;
     private bool $default;
     private string $class;
     private array $documentation = [];
     private ?ReflectionMethod $method = null;
 
-    public function __construct(string $command, array $params = [], ?string $default = Console::NOT_DEFAULT_COMMAND)
+    public function __construct(string $command, ?string $default = Console::NOT_DEFAULT_COMMAND)
     {
         $this->command = $command;
-        $this->params = $params;
         $this->default = $default;
         parent::__construct();
     }
@@ -38,24 +36,6 @@ class Command extends BaseObject
     public function setCommand(string $command): Command
     {
         $this->command = $command;
-        return $this;
-    }
-
-    /**
-     * @return array
-     */
-    public function getParams(): array
-    {
-        return $this->params;
-    }
-
-    /**
-     * @param array $params
-     * @return Command
-     */
-    public function setParams(array $params): Command
-    {
-        $this->params = $params;
         return $this;
     }
 

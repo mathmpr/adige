@@ -69,19 +69,7 @@ class BaseEnvironment extends BaseObject
                     $value = trim($line[1]);
                     $value = trim(explode('#', $value)[0]);
                     if (!empty($key) && !empty($value)) {
-                        $filters = [
-                            FILTER_VALIDATE_BOOLEAN,
-                            FILTER_VALIDATE_INT,
-                            FILTER_VALIDATE_FLOAT,
-                        ];
-                        foreach ($filters as $filter) {
-                            $filtered = filter_var($value, $filter, FILTER_NULL_ON_FAILURE);
-                            if (!is_null($filtered)) {
-                                $value = $filtered;
-                                break;
-                            }
-                        }
-                        $_ENV[$key] = $value;
+                        $_ENV[$key] = determine_var($value);
                         self::$env[$key] = $value;
                     }
                 }

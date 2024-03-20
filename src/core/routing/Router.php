@@ -76,6 +76,7 @@ class Router extends BaseObject
                 $directory = new Directory(ROOT . '/app/controllers/' . $previousDir);
                 break;
             }
+            unset($uri[$key]);
         }
 
         if ($key > 0 && isset($uri[$key + 1])) {

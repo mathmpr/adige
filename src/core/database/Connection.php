@@ -115,6 +115,9 @@ class Connection extends BaseObject
         ];
 
         $trace = array_values(array_filter($exception->getTrace(), function ($trace) {
+            if(!isset($trace['file'])) {
+                return false;
+            }
             return $trace['file'] !== __FILE__;
         }));
 
