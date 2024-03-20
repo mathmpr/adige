@@ -502,7 +502,7 @@ abstract class ActiveRecord extends BaseObject
      * @return static|null
      * @throws BaseException
      */
-    public static function findOne($cond): ?self
+    public static function findAll($cond): ?self
     {
         if (is_scalar($cond)) {
             return static::findById($cond);
@@ -531,7 +531,7 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public static function putOne($cond, array $fields): self
+    public static function putAll($cond, array $fields): self
     {
         $model = (new static($fields));
         if (is_scalar($cond)) {
@@ -585,7 +585,7 @@ abstract class ActiveRecord extends BaseObject
      * @return bool
      * @throws BaseException
      */
-    public static function deleteOne($cond): bool
+    public static function deleteAll($cond): bool
     {
         if (is_scalar($cond)) {
             return static::deleteById($cond);
