@@ -30,6 +30,8 @@ class Connection extends BaseObject
 
     private ?string $database;
 
+    private ?string $port;
+
     private ?string $charset;
 
     private bool $default = false;
@@ -47,6 +49,7 @@ class Connection extends BaseObject
      * @param string $user
      * @param string $password
      * @param string $database
+     * @param string $port
      * @param string $charset
      */
     public function __construct(
@@ -54,13 +57,16 @@ class Connection extends BaseObject
         string $user = '',
         string $password = '',
         string $database = '',
+        string $port = '3306',
         string $charset = 'utf8mb4'
     ) {
         $this->host = $host;
         $this->user = $user;
         $this->password = $password;
         $this->database = $database;
+        $this->port = $port;
         $this->charset = $charset;
+        $this->connect();
         parent::__construct();
     }
 
@@ -73,12 +79,20 @@ class Connection extends BaseObject
         if (!$this->connected) {
             try {
                 $this->db = new PDO(
-                    "mysql:host=" . $this->host . (!empty($this->database) ? ";dbname=" . $this->database : "") . ";charset=" . $this->charset,
+                    "mysql:host=" . $this->host .
+                    ";port=" . $this->port .
+                    (!empty($this->database) ? ";dbname=" . $this->database : "") .
+                    ";charset=" . $this->charset,
                     $this->user,
-                    $this->password
+                    $this->password,
+                    [
+                        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    ]
                 );
-                $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
                 $this->connected = true;
+                $this->setIsDefault(true);
+                self::$connections[$this->host] = $this;
             } catch (PDOException $exception) {
                 $this->handleException($exception);
                 throw new CantConnectException($this->host, $this->user, $this->password, $this->database, $this->charset, $exception);
@@ -224,26 +238,6 @@ class Connection extends BaseObject
             $this->rollBackTransaction();
         }
         return null;
-    }
-
-    /**
-     * @param array $config
-     * @return void
-     * @throws CantConnectException
-     */
-    public static function setDefaultConnection(array $config = []): void
-    {
-        $connection = new Connection(
-            $config['host'] ?? '',
-            $config['user'] ?? '',
-            $config['password'] ?? '',
-            $config['database'] ?? '',
-            $config['charset'] ?? 'utf8mb4'
-        );
-        $connection->setIsDefault(true);
-        $connection->setOptions($config['options'] ?? []);
-        $connection->connect();
-        self::$connections[] = $connection;
     }
 
     /**

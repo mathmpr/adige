@@ -26,6 +26,12 @@
       "src/helpers/functions.php"
     ]
   },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/",
+      "tests\\Fixtures\\web\\": "tests/Fixtures/web/"
+    }
+  },
   "require": {
     "php": "^8.2",
     "ext-fileinfo": "*",

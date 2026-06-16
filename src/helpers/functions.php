@@ -1,52 +1,65 @@
 <?php
 
-use Adige\http\http\Response;
-use Adige\core\Adige;
 use Adige\core\BaseEnvironment;
 use Adige\core\collection\Collection;
-use Adige\file\File;
+use Adige\core\file\File;
+use Adige\core\http\http\FileResponse;
+use Adige\core\http\http\JsonResponse;
+use Adige\core\http\http\WebResponse;
+use Adige\core\http\http\exceptions\JsonEncodingException;
 
-function respond(string|array|object|null $content, int $statusCode = 200, array $headers = []): Response
+function respond(
+    WebResponse $response,
+    string|array|object|null $content,
+    int $statusCode = 200,
+    array $headers = [],
+    string $buffer = ''
+): WebResponse
 {
-    $string = '';
-    if ($content instanceof Response) {
+    if ($content instanceof WebResponse) {
         return $content;
     }
+
     if ($content instanceof File) {
-        if (ob_get_level() > 0) {
-            ob_end_clean();
-            Adige::$response->getHeaders()->setHeaders([
-                'Content-Type' => 'application/octet-stream',
-                'Content-Disposition' => 'attachment; filename="' . $content->getFullName() . '"',
-                'Content-Length' => filesize($content->getLocation()),
-                'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
-                'Pragma' => 'public',
-            ]);
-            Adige::$response->setBody($content);
-            return Adige::$response;
-        }
+        return new FileResponse($content, $statusCode, $headers);
     }
-    if (ob_get_level() > 0) {
-        $string = ob_get_clean();
-    }
+
     foreach ($headers as $key => $value) {
-        Adige::$response->getHeaders()->setHeader($key, $value);
+        $response->getHeaders()->setHeader($key, $value);
     }
-    Adige::$response->setStatusCode($statusCode);
+    $response->setStatusCode($statusCode);
     if ($content instanceof Collection) {
         $content = $content->toArray();
     }
+
     if (is_array($content)) {
-        Adige::$response->getHeaders()->setHeader('Content-Type', 'application/json');
-        Adige::$response->setBody(json_encode($content) . $string);
+        $response = new JsonResponse($content, $statusCode, $headers);
+        $response->setBody(($response->getBody() ?? '') . $buffer);
     } elseif (is_string($content)) {
-        Adige::$response->setBody($content . $string);
+        $response->setBody($content . $buffer);
     } elseif (is_object($content)) {
-        Adige::$response->setBody(json_encode($content) . $string);
+        $response = new JsonResponse($content, $statusCode, $headers);
+        $response->setBody(($response->getBody() ?? '') . $buffer);
     } else {
-        Adige::$response->setBody($string);
+        $response->setBody($buffer);
     }
-    return Adige::$response;
+    return $response;
+}
+
+/**
+ * @throws JsonEncodingException
+ */
+function encode_json(mixed $value): string
+{
+    try {
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT);
+    } catch (\JsonException $exception) {
+        $type = get_debug_type($value);
+        throw new JsonEncodingException(
+            "Failed to encode value of type {$type} to JSON: " . $exception->getMessage(),
+            previous: $exception
+        );
+    }
 }
 
 function env(string $key, string $default = ''): string
@@ -60,10 +73,14 @@ function env(string $key, string $default = ''): string
 
 function determine_var($value)
 {
+    if ($value === '') {
+        return '';
+    }
+
     $filters = [
-        FILTER_VALIDATE_BOOLEAN,
         FILTER_VALIDATE_INT,
         FILTER_VALIDATE_FLOAT,
+        FILTER_VALIDATE_BOOLEAN,
     ];
     foreach ($filters as $filter) {
         $filtered = filter_var($value, $filter, FILTER_NULL_ON_FAILURE);
@@ -73,4 +90,17 @@ function determine_var($value)
         }
     }
     return $value;
+}
+
+function deep_merge(array $array1, array $array2): array
+{
+    $merged = $array1;
+    foreach ($array2 as $key => $value) {
+        if (is_array($value) && isset($merged[$key]) && is_array($merged[$key])) {
+            $merged[$key] = deep_merge($merged[$key], $value);
+        } else {
+            $merged[$key] = $value;
+        }
+    }
+    return $merged;
 }

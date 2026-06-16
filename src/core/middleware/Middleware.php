@@ -2,19 +2,17 @@
 
 namespace Adige\core\middleware;
 
+use Adige\core\BaseRequest;
+use Adige\core\BaseResponse;
 use Adige\core\BaseObject;
-use Adige\http\http\Request;
-use Adige\http\http\Response;
 
 abstract class Middleware extends BaseObject
 {
     /**
-     * if return is Response, the request will be stopped
-     * @param Request $request
-     * @param Response $response
-     * @return mixed
+     * Middleware runs before the route handler.
+     * Returning a response short-circuits the route execution.
      */
-    abstract public function handle(Request $request, Response $response);
+    abstract public function handle(BaseRequest $request, ?BaseResponse $response): ?BaseResponse;
 
     public function __construct()
     {

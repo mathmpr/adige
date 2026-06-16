@@ -6,7 +6,7 @@ use Adige\cli\exceptions\AlreadyRegisteredCommandException;
 use Adige\cli\exceptions\ClassNotExistsException;
 use Adige\cli\exceptions\MethodIsNotStaticException;
 use Adige\cli\exceptions\MethodNotExistsException;
-use Adige\file\Directory;
+use Adige\core\file\Directory;
 use JetBrains\PhpStorm\NoReturn;
 use ReflectionClass;
 

@@ -24,7 +24,6 @@ use Adige\core\BaseObject;
  */
 class Output extends BaseObject
 {
-
     private string $message;
     private int $color = 0;
     private int $background = 0;
@@ -176,6 +175,16 @@ class Output extends BaseObject
     public function getStyle(): string
     {
         return $this->style;
+    }
+
+    public function __toString(): string
+    {
+        return sprintf(
+            $this->style,
+            ($this->background > 0 ? $this->color : 0),
+            ($this->background > 0 ? $this->background : $this->color),
+            trim($this->message)
+        );
     }
 
 }

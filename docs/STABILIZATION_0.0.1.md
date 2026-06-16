@@ -1,0 +1,464 @@
+# TODO: Stabilize Adige as a Microframework
+
+This document defines the stabilization plan that transformed Adige from an experimental/educational framework into a small, predictable and reliable microframework.
+
+Scope of this stabilization:
+- prioritize execution predictability
+- reduce global side effects
+- close public contracts before adding new features
+- cover the core with automated tests
+- stabilize HTTP/kernel/router/response first; evolve ORM afterwards
+
+Out of scope for this line:
+- adding major new features
+- expanding the ORM layer before the HTTP core is stable
+- turning the project into a full stack framework
+
+## Current summary
+
+Overall status:
+- approximate progress: `100%` for the `0.0.1` stabilization line
+
+What advanced most clearly:
+- creation of a simple container in [`src/core/App.php`](/home/mathmpr/PhpstormProjects/adige/src/core/App.php)
+- separation between base abstractions and web implementations:
+  - [`src/core/BaseRequest.php`](/home/mathmpr/PhpstormProjects/adige/src/core/BaseRequest.php)
+  - [`src/core/BaseResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/BaseResponse.php)
+  - [`src/core/routing/BaseRoute.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php)
+  - [`src/core/http/http/WebRequest.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/WebRequest.php)
+  - [`src/core/http/http/WebResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/WebResponse.php)
+- introduction of a console-specific response:
+  - [`src/console/ConsoleResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/console/ConsoleResponse.php)
+- central transport-specific response normalization in [`src/core/App.php`](/home/mathmpr/PhpstormProjects/adige/src/core/App.php)
+- small specialized HTTP responses:
+  - [`src/core/http/http/JsonResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/JsonResponse.php)
+  - [`src/core/http/http/FileResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/FileResponse.php)
+  - [`src/core/http/http/RedirectResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/RedirectResponse.php)
+- controller auto-discovery configurable by namespaces and using deterministic candidate generation in [`src/core/routing/Router.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/Router.php)
+- console base with reflection-driven help:
+  - [`src/console/controllers/BaseController.php`](/home/mathmpr/PhpstormProjects/adige/src/console/controllers/BaseController.php)
+  - [`src/console/controllers/IndexController.php`](/home/mathmpr/PhpstormProjects/adige/src/console/controllers/IndexController.php)
+  - [`src/console/controllers/ServerController.php`](/home/mathmpr/PhpstormProjects/adige/src/console/controllers/ServerController.php)
+- central error/exception handling in [`src/core/Adige.php`](/home/mathmpr/PhpstormProjects/adige/src/core/Adige.php)
+- centralized failure handling in [`src/core/ExceptionHandler.php`](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
+- initial unit test suite already structured in:
+  - [`tests/Unit/Routing/RouterAutoDiscoverTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouterAutoDiscoverTest.php)
+  - [`tests/Unit/Routing/RouterFindRouteTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouterFindRouteTest.php)
+  - [`tests/Unit/Routing/RouteActionParamsTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouteActionParamsTest.php)
+  - [`tests/Unit/Routing/RouteMiddlewareTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouteMiddlewareTest.php)
+  - [`tests/Unit/Core/AdigeHttpErrorHandlingTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Core/AdigeHttpErrorHandlingTest.php)
+
+Main remaining gaps after `0.0.1`:
+- better separate the public API from the application playground that lives in the same repository
+- reduce the remaining global coupling around `Adige::$app`
+- expand test scenarios beyond the minimum coverage defined for `0.0.1`
+
+---
+
+## Phase 0: Freeze and diagnose
+
+Objective:
+- stop expanding functionality while central contracts are still unstable
+
+Current status:
+- completed
+
+Tasks:
+- [x] Freeze new features in `src/` until the HTTP core is stable.
+- [x] Define the target stabilization version, for example `0.2.x` or `1.0.0-alpha`.
+- [x] Document the current public API of the framework:
+  - [x] `Adige::run()`
+  - [x] `Route::*()`
+  - [x] `Controller`
+  - [x] `Request`
+  - [x] `Response`
+  - [x] `ActiveRecord`
+- [x] Classify what is public API and what is internal detail.
+- [x] List current known behaviors as bugs, limits or inconsistencies.
+
+State notes:
+- there is already a clear refactoring trail through the core
+- the work in this line was explicitly focused on stabilization and core maturity, without major feature expansion
+- the main architectural direction was already chosen:
+  - `Adige` remains the central execution entrypoint
+  - `App` handles container responsibilities, handlers and response normalization
+- the public documentation for `0.0.1` is now concentrated in [`PUBLIC_API.md`](/home/mathmpr/PhpstormProjects/adige/PUBLIC_API.md)
+- the target stabilization version was fixed as `0.0.1`
+
+Acceptance criterion:
+- there is a clear list of what may change freely and what requires compatibility
+
+---
+
+## Phase 1: Define the core contract
+
+Objective:
+- make application execution explicit, with clearly separated responsibilities
+
+Main starting point:
+- [`src/core/Adige.php`](/home/mathmpr/PhpstormProjects/adige/src/core/Adige.php)
+
+Original problem:
+- `Adige` kept global static state and remained at the center of execution
+
+Current status:
+- completed
+
+Tasks:
+- [x] Define the exact role of `Adige`:
+  - [x] keep `Adige` as the central execution entrypoint, equivalent to the framework kernel
+  - [x] keep the name `Adige`
+- [x] Extract the following responsibilities from the central class:
+  - [x] request creation
+  - [x] response creation
+  - [x] route resolution
+  - [x] exception handling
+  - [x] response emission
+- [x] Define a single execution flow:
+  - [x] receive `Request`
+  - [x] resolve route handler
+  - [x] execute middleware
+  - [x] obtain `Response`
+  - [x] emit `Response`
+- [x] Decide whether the kernel remains static or becomes instantiable.
+- [x] Minimize or remove `Adige::$request`, `Adige::$response` and `Adige::$router`.
+
+State notes:
+- [`src/core/App.php`](/home/mathmpr/PhpstormProjects/adige/src/core/App.php) already acts as container/configurator
+- there is already support for custom `App` classes in:
+  - [`app/core/App.php`](/home/mathmpr/PhpstormProjects/adige/app/core/App.php)
+  - [`app/core/Adige.php`](/home/mathmpr/PhpstormProjects/adige/app/core/Adige.php)
+- lazy loading and `instant => true` already exist in the DI layer
+- the architectural decision is stable:
+  - `Adige` plays the role of the kernel while keeping this name
+  - `App` concentrates container logic, handlers and response normalization
+- `Adige` no longer keeps `request`, `response` and `router` as global static state
+- the main remaining residue is outside the scope of this phase:
+  - `Adige::$app` still exists as a central global access point
+  - handlers and bootstraps still depend on the current core conventions
+
+Acceptance criterion:
+- there is a small and explicit HTTP execution pipeline
+
+---
+
+## Phase 2: Standardize the HTTP input/output contract
+
+Objective:
+- make the framework respond consistently regardless of the action implementation
+
+Original problems:
+- actions could return too many loosely defined types
+- exceptions and serialization did not follow a closed contract
+
+Current status:
+- completed
+
+Tasks:
+- [x] Define the public return contract for actions:
+  - [x] `BaseResponse`
+  - [x] `string`
+  - [x] `array`
+  - [x] `object`
+  - [x] `null`
+- [x] Create central normalization from action results to `BaseResponse`.
+- [x] For console, `null` must become `ConsoleResponse` with exit code `0`.
+- [x] For web, `null` must become an empty `WebResponse` or use the output buffer.
+- [x] If `respond()` remains, turn it into a pure utility that receives/returns `Response` without depending on globals.
+- [x] Standardize accepted return types from actions.
+- [x] Create small specialized responses when appropriate:
+  - [x] `JsonResponse`
+  - [x] `RedirectResponse`
+  - [x] `FileResponse`
+- [x] Review `Response` so its API is coherent:
+  - [x] `redirect()` must return `self`
+  - [x] `getBody()` must reflect the real body type
+  - [x] status code and headers must be manipulated predictably
+- [x] Define the JSON serialization policy:
+  - [x] encoding errors
+  - [x] non-serializable objects
+  - [x] `Collection`
+  - [x] models
+
+State notes:
+- [`src/core/http/http/WebResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/WebResponse.php) already concentrates the web response behavior
+- [`src/core/App.php`](/home/mathmpr/PhpstormProjects/adige/src/core/App.php) already centralizes transport-specific normalization:
+  - `normalizeWebResponse()`
+  - `normalizeConsoleResponse()`
+- [`src/helpers/functions.php`](/home/mathmpr/PhpstormProjects/adige/src/helpers/functions.php) stopped being a mandatory structural part of the cycle and now works as a pure helper receiving explicit `Response`
+- the internal framework contract now consistently moves toward always working with `BaseResponse`
+- status code and header behavior already has predictable coverage in [`tests/Unit/Core/AppResponseNormalizationTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Core/AppResponseNormalizationTest.php)
+- the JSON policy now covers encoding errors, non-serializable objects, `Collection` and models with `toArray()`
+
+Acceptance criterion:
+- every endpoint follows the same return contract and the framework no longer has to guess too much
+
+---
+
+## Phase 3: Centralize exception and failure handling
+
+Objective:
+- remove implicit shutdown-driven behavior and make failures observable and mapped
+
+Current status:
+- completed
+
+Tasks:
+- [x] Create a central `ExceptionHandler`.
+- [x] Add explicit `try/catch` around the request cycle.
+- [x] Map exceptions to clear HTTP status codes.
+- [x] Separate development and production behavior:
+  - [x] dev: detailed message and controlled stack trace
+  - [x] prod: generic message and logging
+- [x] Stop modifying `Response` inside exception constructors.
+- [x] Create semantic exceptions for the core:
+  - [x] `RouteNotFoundException`
+  - [x] `MethodNotAllowedException`
+  - [x] `InvalidResponseException`
+  - [x] `MiddlewareExecutionException`
+- [x] Define a standardized JSON error format when applicable.
+
+State notes:
+- [`src/core/Adige.php`](/home/mathmpr/PhpstormProjects/adige/src/core/Adige.php) already delegates failure registration and handling to [`src/core/ExceptionHandler.php`](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
+- the main execution cycle already has explicit `try/catch` in `Adige::run()`
+- for `WebRequest`, JSON/HTML differentiation based on `Accept` already exists
+- [`src/core/http/http/exceptions/RouteNotFound.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/exceptions/RouteNotFound.php) and [`MethodNotAllowed.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/exceptions/MethodNotAllowed.php) are already integrated with the router and the HTTP handler
+- [`src/core/InvalidResponseException.php`](/home/mathmpr/PhpstormProjects/adige/src/core/InvalidResponseException.php) now covers invalid action return values
+- [`src/core/middleware/exceptions/MiddlewareExecutionException.php`](/home/mathmpr/PhpstormProjects/adige/src/core/middleware/exceptions/MiddlewareExecutionException.php) covers middleware pipeline failures
+- the JSON error payload is now standardized with `error`, `status`, `message` and debug-only details
+
+Acceptance criterion:
+- every failure in the HTTP cycle passes through a single handling point
+
+---
+
+## Phase 4: Stabilize routing
+
+Objective:
+- guarantee predictable matching and a consistent route API
+
+Current status:
+- completed
+
+Tasks:
+- [x] Fix `ALL` support in the matcher.
+- [x] Fix group middleware execution at index `0`.
+- [x] Separate inside the router:
+  - [x] method matching
+  - [x] pattern matching
+  - [x] param extraction
+- [x] Review and document route specificity ordering.
+- [x] Define clear behavior for:
+  - [x] route not found
+  - [x] method not allowed
+  - [x] conflicts between static and dynamic routes
+- [x] Decide whether auto-discovery remains in the core.
+- [x] If it remains, document its limits and precedence relative to explicit routes.
+
+State notes:
+- [`src/core/routing/BaseRoute.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php) was extracted
+- [`src/core/routing/Route.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/Route.php) became a thin HTTP layer
+- [`src/core/routing/Router.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/Router.php) already accepts configurable controller namespaces
+- auto-discovery was rewritten to use deterministic candidate generation from the URI
+- resolution now validates action existence before accepting a controller
+- explicit route matching now preserves multiple routes with the same pattern and different methods
+- `Router` now separates internally:
+  - method matching
+  - pattern matching
+  - param extraction
+- explicit routes now take precedence over autodiscovery
+- among compatible explicit routes, static segments take precedence over dynamic segments
+- the current explicit route ordering follows this rule:
+  - more segments first
+  - on ties, more static segments first
+  - on ties, fewer dynamic segments first
+  - on total tie, declaration order is preserved
+- an empty URI already uses default controller/action
+- in console mode, `php adige` forces the core `IndexController`
+- automated coverage already exists for:
+  - `ALL`
+  - route not found
+  - method not allowed
+  - callable route
+  - autodiscovery with empty URI
+  - autodiscovery with 1, 2 and deeper segment counts
+
+Current autodiscovery precedence:
+- global router precedence:
+  - first try explicit routes
+  - if no explicit route matches, try autodiscovery
+  - if nothing matches, fail with `404`
+- URI with `0` segments:
+  - use `defaultController` and `defaultAction`
+- URI with `1` segment:
+  - try `<namespace>\<segment>\IndexController::actionIndex`
+  - then `<namespace>\<Segment>Controller::actionIndex`
+- URI with `2+` segments:
+  - first try the full path as a subnamespace with `IndexController::actionIndex`
+  - then walk back one segment at a time, promoting the current segment to `XController`
+  - the remaining URI becomes the action name in camelCase
+- a candidate is only accepted if the class exists and the action exists on that controller
+
+Examples:
+- `/admin`
+  - `app\web\controllers\admin\IndexController::actionIndex`
+  - `app\web\controllers\AdminController::actionIndex`
+- `/admin/login`
+  - `app\web\controllers\admin\login\IndexController::actionIndex`
+  - `app\web\controllers\admin\LoginController::actionIndex`
+  - `app\web\controllers\AdminController::actionLogin`
+- `/alpha/beta`
+  - `app\web\controllers\alpha\beta\IndexController::actionIndex`
+  - `app\web\controllers\alpha\BetaController::actionIndex`
+  - `app\web\controllers\AlphaController::actionBeta`
+
+Acceptance criterion:
+- the router is deterministic and follows simple, documented rules
+
+---
+
+## Phase 5: Fix action parameter resolution
+
+Objective:
+- avoid surprising behavior in action argument injection
+
+Current status:
+- completed
+
+Tasks:
+- [x] Define the official parameter resolution order:
+  - [x] route params have absolute precedence
+  - [x] query params only fill parameters absent from the route
+  - [x] body params only fill parameters absent from both route and query
+- [x] Use `array_key_exists()` instead of truthiness-based logic.
+- [x] Decide whether scalar type coercion is supported.
+- [x] Distinguish missing parameters from empty values.
+- [x] Decide whether `Request` should expose merged input or separate sources.
+- [x] Cover actions with required, optional and default-valued parameters.
+
+State notes:
+- [`src/core/BaseRequest.php`](/home/mathmpr/PhpstormProjects/adige/src/core/BaseRequest.php) already exposes `input()`
+- [`src/core/routing/BaseRoute.php`](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php) already uses `array_key_exists()`
+- [`src/console/ConsoleRequest.php`](/home/mathmpr/PhpstormProjects/adige/src/console/ConsoleRequest.php) already integrates CLI parameters into action resolution
+- route params now have absolute precedence over request input during action injection
+- the current scalar coercion follows `determine_var()` in [`src/helpers/functions.php`](/home/mathmpr/PhpstormProjects/adige/src/helpers/functions.php)
+- required, optional, default-valued and falsy parameters already have initial coverage in [`tests/Unit/Routing/RouteActionParamsTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouteActionParamsTest.php)
+
+Acceptance criterion:
+- argument passing to actions is predictable, documented and tested
+
+---
+
+## Phase 6: Review the middleware pipeline
+
+Objective:
+- guarantee simple chaining without excessive implicit behavior
+
+Current status:
+- completed
+
+Tasks:
+- [x] Define the middleware contract:
+  - [x] receives `Request`
+  - [x] receives `Response`
+  - [x] does not receive `next`
+  - [x] may return `Response` for short-circuiting
+- [x] Choose a model and apply it consistently throughout the framework.
+- [x] Standardize middleware short-circuiting.
+- [x] Remove unexpected request mutations as the example default.
+- [x] Test execution order in nested groups.
+- [x] Decide whether middleware belongs to the router or the kernel.
+
+State notes:
+- [`src/core/middleware/Middleware.php`](/home/mathmpr/PhpstormProjects/adige/src/core/middleware/Middleware.php) already uses `BaseRequest` and `BaseResponse`
+- the current model already has initial coverage for order, request mutation and short-circuiting in [`tests/Unit/Routing/RouteMiddlewareTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouteMiddlewareTest.php)
+- the current contract was formalized as pre-execution middleware in the router, without `next`
+- [`app/web/middlewares/DefaultMiddleware.php`](/home/mathmpr/PhpstormProjects/adige/app/web/middlewares/DefaultMiddleware.php) is now a neutral example, without unexpected request mutation
+
+Acceptance criterion:
+- middleware order and effect are obvious and repeatable
+
+---
+
+## Phase 7: Review `Request` and `Response`
+
+Objective:
+- make the HTTP layer small, correct and cohesive
+
+Current status:
+- completed
+
+Tasks:
+- [x] Review `Request::fixUri()` and remove unnecessary coupling to the local project path.
+- [x] Define a clear API for:
+  - [x] query string
+  - [x] form body
+  - [x] raw body
+  - [x] uploaded files
+  - [x] headers
+- [x] Review header normalization.
+- [x] Guarantee compatibility with missing values without notices or side effects.
+- [x] Review response emission:
+  - [x] header ordering
+  - [x] string body
+  - [x] file body
+  - [x] content type
+- [x] Define how the HTTP layer can be tested without a real web server.
+
+State notes:
+- [`src/core/http/http/Headers.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/Headers.php) already performs case-insensitive lookup
+- [`src/core/http/http/WebRequest.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/WebRequest.php) already detects `Accept: application/json`
+- [`src/core/http/http/JsonResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/JsonResponse.php), [`FileResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/FileResponse.php) and [`RedirectResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/RedirectResponse.php) already exist as response specializations
+- [`src/core/http/http/WebResponse.php`](/home/mathmpr/PhpstormProjects/adige/src/core/http/http/WebResponse.php) now resolves `Content-Type` predictably and exposes headers ready for deterministic dispatch
+- `Headers` now replaces duplicate names case-insensitively, avoiding implicit `Content-Type` duplication
+- the HTTP response layer now has no-server coverage in [`tests/Unit/Core/WebResponseHttpContractTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Core/WebResponseHttpContractTest.php)
+- `fixUri()` was decoupled from `ROOT`, but still benefits from more scenario coverage
+
+Acceptance criterion:
+- request and response can be instantiated and tested with ease
+
+---
+
+## Phase 8: Create the core test suite
+
+Objective:
+- prevent regressions while stabilizing behavior
+
+Current status:
+- completed
+
+Tasks:
+- [x] Add PHPUnit explicitly to the development flow if it is not already structured.
+- [x] Create a test structure for `src/`.
+- [x] Cover the critical components first:
+  - [x] `Adige` or the kernel
+  - [x] `Router`
+  - [x] `Route`
+  - [x] `Request`
+  - [x] `Response`
+  - [x] middleware
+- [x] Create contract tests, not only implementation tests.
+- [x] Create minimal fixtures for test controllers and routes.
+- [x] Configure simple test execution in the README.
+
+Minimum coverage priority:
+- [x] route found
+- [x] route not found
+- [x] method not allowed
+- [x] middleware executed
+- [x] middleware interrupting flow
+- [x] action returning JSON
+- [x] action returning redirect
+- [x] action with required params
+- [x] internal error becoming `500`
+
+State notes:
+- there is already an initial suite for the router and HTTP exception mapping
+- [`tests/Unit/Routing/RouteContractTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Routing/RouteContractTest.php) already covers the basic public API of `Route::*`
+- [`tests/Unit/Core/WebRequestContractTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Core/WebRequestContractTest.php) already covers `fixUri()`, headers and basic `WebRequest` data without a real web server
+- [`tests/Unit/Core/WebActionResponseFlowTest.php`](/home/mathmpr/PhpstormProjects/adige/tests/Unit/Core/WebActionResponseFlowTest.php) covers actions returning JSON, redirect and internal errors becoming `500`
+- the README already documents simple PHPUnit execution
+- the largest remaining gap after `0.0.1` is to expand real-world `WebRequest` scenarios and add more contract tests around actions
+
+Acceptance criterion:
+- the core has a sufficient test base to allow safe refactoring
