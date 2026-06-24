@@ -17,7 +17,7 @@ Out of scope for now:
 ## Current Summary
 
 Estimated overall state:
-- approximate progress: `90% to 95%`
+- approximate progress: `100%`
 
 Starting points of the ORM:
 - [`src/core/database/ActiveRecord.php`](/home/mathmpr/PhpstormProjects/adige/src/core/database/ActiveRecord.php)
@@ -26,20 +26,24 @@ Starting points of the ORM:
 - [`src/core/database/QueryBuilder.php`](/home/mathmpr/PhpstormProjects/adige/src/core/database/QueryBuilder.php)
 - [`src/core/database/DsnBuilder.php`](/home/mathmpr/PhpstormProjects/adige/src/core/database/DsnBuilder.php)
 
-Remaining backlog moved to:
-- [`TODO.md`](/home/mathmpr/PhpstormProjects/adige/TODO.md)
+Backlog status:
+- the remaining ORM backlog tracked during stabilization is now complete
+- the short end-user ORM contract is consolidated in this document
 
 What already changed materially:
 - `ActiveRecord` no longer keeps the connection as the main fixed state of the instance
 - explicit connections now flow through `one()`, `all()`, `build()`, `execute()`, `save()` and `remove()`
 - hydrated models preserve the runtime connection used by the main query
 - relations reuse the same runtime connection in eager and lazy loading
+- model construction no longer requires immediate live schema access
 - query building was split out of `ActiveRecord`
 - DSN building was split out of `Connection`
 - `Schema` now dispatches to a MySQL-specific implementation instead of embedding MySQL logic directly in the base class
 - SQLite now has its own dialect classes for DSN, schema reading and query building
 - the default connection policy is now explicit: the first registered connection may become default via constructor flag, and later promotion must be explicit
 - connection names now fail fast when duplicated instead of being silently overwritten
+- eager loading now supports nested relation paths via dot notation for `RelationDefinition` relations
+- the public `where()` contract now uses recursive logical groups and explicit comparison operators
 
 ---
 
@@ -73,7 +77,7 @@ Notes:
 - the intended public API line for diagnosis is now clear enough:
   - public surface under stabilization: `ActiveRecord`, `Connection`, `Schema`
   - internal implementation detail still free to change: dialect builders/readers and internal query assembly helpers
-- the next useful artifact for this phase is an ORM public API document similar to the `0.0.1` core stabilization docs
+- the short ORM public contract is now consolidated at the end of this document
 
 Acceptance criteria:
 - there is a clear line between what applications may use and what is still internal ORM detail
@@ -248,7 +252,7 @@ Notes:
   - `delete()`
   - `deleteAll()`
   - `deleteById()`
-- model construction still resolves schema metadata immediately, so object creation is coupled to an available connection and readable schema
+- model construction no longer resolves schema metadata immediately, so objects may be instantiated before a connection is available and later persisted/query-built with an explicit connection
 - loaded state is now separated from new and changed persisted attributes:
   - `load()` now populates only `attributes`
   - `hydrate()` is public and populates both `attributes` and `oldAttributes`
@@ -284,7 +288,6 @@ Tasks:
   - [x] `where()`
   - [x] `andWhere()`
   - [x] `orWhere()`
-  - [x] `whereIn()`
   - [x] `join()` / `innerJoin()` / `leftJoin()` / `rightJoin()`
 - [x] Guarantee predictable SQL and params composition.
 - [x] Review `rawSql` generation.
@@ -299,25 +302,183 @@ Notes:
   - fluent return of `self` / `$this`
   - select + join + where + order SQL composition
   - accepted structural formats for `where()` / `andWhere()` / `orWhere()`
-  - parameter ordering for scalar and `IN` conditions
-- accepted structural formats for `where()` / `andWhere()` / `orWhere()` in `0.0.2` are:
-  - equality map with one field/value pair, for example `[':tableName.user_id' => 10]`
-  - indexed comparison triplet in the form `[':tableName.id', '>', 1]`
-  - `IN` variants remain restricted to the explicit `whereIn()` / `andWhereIn()` / `orWhereIn()` methods with a single field mapped to an array, for example `[':tableName.id' => [1, 2]]`
-- mixed `AND` / `OR` grouping now closes parentheses predictably during SQL generation
+  - parameter ordering for scalar comparisons and `IN` / `NOT IN` conditions
+- accepted structural formats for `where()` / `andWhere()` / `orWhere()` in the stabilized contract are now:
+  - equality map, for example `[':tableName.user_id' => 10]`
+  - explicit comparison triplet, for example `[':tableName.id', '>', 1]`
+  - logical group arrays starting with `AND` or `OR`, recursively nestable by array depth
+- mixed `AND` / `OR` grouping now compiles from the recursive condition tree and closes parentheses predictably during SQL generation
+- `IN` and `NOT IN` are now part of the public operator contract of `where()` instead of separate query methods
 - query payload resolution now happens in `ActiveRecord` before builder compilation:
   - `INSERT INTO` receives all persisted `attributes`
   - `UPDATE` receives only dirty persisted fields resolved from `attributes` vs `oldAttributes`
   - the builder no longer receives full model state to infer diffs on its own
 - the `0.0.2` query builder limit is now explicit:
   - the supported public query surface is restricted to the methods already exposed through `ActiveRecord`
-  - no new builder verbs are implied beyond `select()`, `where()`, `andWhere()`, `orWhere()`, `whereIn()`, `andWhereIn()`, `orWhereIn()`, `innerJoin()`, `leftJoin()`, `rightJoin()`, `orderByAsc()` and `orderByDesc()`
+  - no new builder verbs are implied beyond `select()`, `where()`, `andWhere()`, `orWhere()`, `innerJoin()`, `leftJoin()`, `rightJoin()`, `orderByAsc()` and `orderByDesc()`
   - fluent chaining through these methods must keep returning the same model/query instance
 
 Acceptance criteria:
 - query construction is predictable, testable and free from hard-to-track implicit behavior
 
 ---
+
+## Short Public ORM Contract
+
+This section consolidates the short end-user ORM contract stabilized by `0.0.2`.
+
+### Main public surface
+
+- `Adige\core\database\Connection`
+- `Adige\core\database\Schema`
+- `Adige\core\database\ActiveRecord`
+- `Adige\core\database\RelationDefinition` when returned from public relation methods on models
+
+### `Connection`
+
+- a connection has explicit `type` and `name`
+- duplicate connection names fail explicitly
+- the default connection is explicit:
+  - the first registered connection may become default
+  - later connections do not steal default status implicitly
+  - `makeDefault()` promotes a connection explicitly
+- `Connection::getDefaultConnection()` returns the default connection or fails when none exists
+- supported drivers in the stabilized contract:
+  - `mysql`
+  - `sqlite`
+- DML/query return behavior:
+  - `query()` returns `PDOStatement`
+  - `select()` returns `array`
+  - `insert()` returns `lastInsertId()`
+  - `update()` returns affected rows
+  - `delete()` returns affected rows
+- query execution errors bubble to the caller as PDO-level failures
+
+### `Schema`
+
+- schema metadata is read through `Schema`
+- primary key and field discovery are public through:
+  - `Schema::pkName()`
+  - `Schema::getFields()`
+  - `Schema::getSchema()`
+- schema cache behavior is explicit:
+  - file cache and memory cache are supported
+  - persistence and refresh are explicit operations
+  - normal reads do not silently create or refresh cache files
+
+### `ActiveRecord`
+
+- every model must implement `tableName(): string`
+- model construction does not require immediate live schema access
+- a model may be instantiated before a connection is available and later persisted/query-built with an explicit connection
+- runtime connection may come from:
+  - the explicit connection passed to query/persistence methods
+  - the model runtime connection
+  - the default connection
+
+### Query entry points
+
+- `Model::find(?Connection $connection = null)`
+- `Model::findById($id, ?Connection $connection = null)`
+- `Model::findAll($cond, ?Connection $connection = null)`
+- `Model::hasOne(?Connection $connection = null)`
+- `Model::hasMany(?Connection $connection = null)`
+
+### Persistence entry points
+
+- instance methods:
+  - `save(?Connection $connection = null)`
+  - `remove(?Connection $connection = null)`
+- static helpers:
+  - `create(array $fields, ?Connection $connection = null)`
+  - `put(?Connection $connection = null)`
+  - `putAll($cond, array $fields, ?Connection $connection = null)`
+  - `putById($id, array $fields, ?Connection $connection = null)`
+  - `delete(?Connection $connection = null)`
+  - `deleteAll($cond, ?Connection $connection = null)`
+  - `deleteById($id, ?Connection $connection = null)`
+
+### Model state and lifecycle
+
+- `load()` populates current attributes
+- `hydrate()` populates current attributes and synchronizes persisted state
+- hydrated records keep loaded state separate from new changes
+- dirty tracking only considers persisted schema fields
+- loaded/eager/lazy relations do not pollute persisted dirty tracking
+- `save()` behavior:
+  - inserts when the model is new
+  - updates only dirty persisted fields when the model is loaded
+- `remove()` deletes by the model primary key
+
+### Relations
+
+- relation methods are public zero-argument instance methods returning `RelationDefinition`
+- supported relation helpers in models:
+  - `hasOneRelation()`
+  - `hasManyRelation()`
+- lazy loading is supported through property access
+- eager loading is supported through `with()`
+- nested eager loading through dot notation is supported:
+  - example: `with(['orders.transactions'])`
+- join-based relation hydration is supported through `joinWith()`
+- nested `joinWith()` paths are supported
+- joined relation/table references inside `where()` continue to resolve through the internal alias map generated by `joinWith()`
+
+### Collection and serialization behavior
+
+- query result helpers return hydrated models or collections of models
+- `asArray()` still returns hydrated models today; the stable behavior is that `toArray()` serializes the model graph
+- `toArray()` includes persisted fields and loaded relations
+- cyclic model references are broken during serialization to avoid infinite recursion
+- extra runtime attributes are not treated as persisted fields automatically
+
+### Query builder surface exposed through `ActiveRecord`
+
+- supported query composition methods:
+  - `select()`
+  - `where()`
+  - `andWhere()`
+  - `orWhere()`
+  - `innerJoin()`
+  - `leftJoin()`
+  - `rightJoin()`
+  - `orderByAsc()`
+  - `orderByDesc()`
+  - `with()`
+  - `joinWith()`
+- fluent methods return the same query/model instance for chaining
+
+## Query Composition Contract
+
+The accepted public contract for `where()` / `andWhere()` / `orWhere()` is:
+
+- equality map:
+  - `['column' => 'value']`
+  - `['column_a' => 'value_a', 'column_b' => 'value_b']` combines entries with `AND`
+- explicit comparison triplet:
+  - `['column', '>=', 10]`
+  - `['column', 'NOT IN', ['value1', 'value2']]`
+- logical groups:
+  - `['AND', ['column' => 'value'], ['other', '!=', null]]`
+  - `['OR', ['column' => 'value'], ['other', '>', 100]]`
+- nested groups may be combined recursively to express parentheses by array depth:
+  - `['AND', ['id' => 10], ['OR', ['deleted_at', '=', null], ['AND', ['status', 'IN', ['open', 'pending']], ['OR', ['score', '>=', 100], ['score', '<', 0]]]], ['title', 'NOT IN', ['Ada', 'Grace']]]`
+- root composition across calls is explicit:
+  - `where($a)->andWhere($b)` becomes `($a AND $b)`
+  - `where($a)->orWhere($b)` becomes `($a OR $b)`
+  - `where(['OR', ...])->andWhere(['AND', ...])` becomes `((...) AND (...))`
+- supported operators in the public contract:
+  - `=`, `==`, `!=`, `<>`, `>`, `>=`, `<`, `<=`, `IN`, `NOT IN`, `LIKE`, `NOT LIKE`
+- `null` comparisons compile to `IS NULL` / `IS NOT NULL`
+- simple unqualified field names are qualified against the root table automatically
+- joined relation/table references continue to resolve through the `joinWith()` alias map during SQL build
+
+### Limits of the current public contract
+
+- the public query surface is the one exposed through `ActiveRecord`; lower-level dialect builders remain internal detail
+- query composition is defined by the `where()` contract in this document
+- no broader SQL DSL is implied beyond the stabilized methods above
+- alias names generated for `joinWith()` are internal and must not be treated as public API
 
 ## Phase 5: Review Serialization and Relations
 

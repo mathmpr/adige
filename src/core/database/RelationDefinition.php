@@ -19,6 +19,8 @@ class RelationDefinition
 
     private array $select = ['*'];
 
+    private string $joinType = 'LEFT';
+
     public function __construct(
         string $type,
         string $relatedModelClass,
@@ -48,6 +50,12 @@ class RelationDefinition
         return $this;
     }
 
+    public function joinType(string $joinType): self
+    {
+        $this->joinType = strtoupper(trim($joinType));
+        return $this;
+    }
+
     public function isHasOne(): bool
     {
         return $this->type === self::TYPE_ONE;
@@ -73,6 +81,11 @@ class RelationDefinition
         return $this->relatedModelClass;
     }
 
+    public function getJoinType(): string
+    {
+        return $this->joinType;
+    }
+
     public function createQuery(array $localValues, ?Connection $connection = null): ActiveRecord
     {
         $relatedModelClass = $this->relatedModelClass;
@@ -87,8 +100,10 @@ class RelationDefinition
             ]);
         }
 
-        return $query->whereIn([
-            $field => array_values($localValues)
+        return $query->where([
+            $field,
+            'IN',
+            array_values($localValues),
         ]);
     }
 

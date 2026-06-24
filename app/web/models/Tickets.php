@@ -1,22 +1,23 @@
 <?php
 
+
 namespace app\web\models;
 
 use Adige\core\database\ActiveRecord;
 use Adige\core\database\RelationDefinition;
 
-class TicketOrders extends ActiveRecord
+class Tickets extends ActiveRecord
 {
     public static function tableName(): string
     {
-        return 'ticket_orders';
+        return 'tickets';
     }
 
-    public function transactions(): RelationDefinition
+    public function orders(): RelationDefinition
     {
         return $this->hasManyRelation(
-            TicketOrderTransactions::class,
-            'order_id',
+            TicketOrders::class,
+            'ticket_id',
             'id'
         );
     }

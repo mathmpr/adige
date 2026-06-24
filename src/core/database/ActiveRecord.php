@@ -8,6 +8,7 @@ use Adige\helpers\Str;
 use Adige\core\collection\Collection;
 use Adige\core\database\dialects\mysql\MysqlQueryBuilder;
 use Adige\core\database\dialects\sqlite\SqliteQueryBuilder;
+use Adige\core\database\exceptions\DefaultConnectionNotDefinedException;
 use Adige\core\database\exceptions\UnsupportedDatabaseDriverException;
 use ReflectionClass;
 use Throwable;
@@ -38,7 +39,11 @@ abstract class ActiveRecord extends BaseObject
 
     private array $with = [];
 
+    private array $joinWith = [];
+
     private array $withSelects = [];
+
+    private ?array $joinWithPlan = null;
 
     private array $options;
 
@@ -71,14 +76,20 @@ abstract class ActiveRecord extends BaseObject
         } catch (Throwable $exception) {
             throw new BaseException('Caller no implements ActiveRecord', 0, $exception);
         }
-        $this->pkName = Schema::pkName($this->tableName, $this->resolveConnection()->getDb());
-        $this->queryBuilder = $this->createQueryBuilder();
         $this->load($props);
         parent::__construct();
     }
 
     public function load(array $props = []): void
     {
+        if (!$this->canResolveSchemaMetadata()) {
+            foreach ($props as $prop => $value) {
+                $this->attributes[$prop] = $value;
+            }
+
+            return;
+        }
+
         foreach ($props as $prop => $value) {
             if ($this->isSchemaField($prop)) {
                 $this->attributes[$prop] = $value;
@@ -89,6 +100,12 @@ abstract class ActiveRecord extends BaseObject
     public function hydrate(array $props = []): void
     {
         $this->load($props);
+
+        if (!$this->canResolveSchemaMetadata()) {
+            $this->oldAttributes = $this->attributes;
+            return;
+        }
+
         $this->oldAttributes = [];
 
         foreach ($this->attributes as $name => $value) {
@@ -156,28 +173,32 @@ abstract class ActiveRecord extends BaseObject
         $connection = $this->resolveConnection($connection);
 
         if ($this->isNewRecord()) {
-            $this->beginInsert()
+            $pkName = $this->getPkNameValue($connection);
+            $this->beginInsert($connection)
                 ->build($connection);
-            $result = $connection->insert($this->getRawSql(), $this->queryBuilder->getParams());
-            $this->{$this->pkName} = $result;
+            $result = $connection->insert($this->getRawSql(), $this->getQueryBuilder()->getParams());
+            if ($pkName !== null) {
+                $this->{$pkName} = $result;
+            }
             $this->syncPersistedState();
             return true;
         }
 
+        $pkName = $this->getPkNameValue($connection);
         if (!$this->hasDirtyPersistedAttributes()) {
             return true;
         }
 
-        $id = array_key_exists($this->pkName, $this->oldAttributes)
-            ? $this->oldAttributes[$this->pkName]
-            : $this->{$this->pkName};
-        $this->beginUpdate()
+        $id = $pkName !== null && array_key_exists($pkName, $this->oldAttributes)
+            ? $this->oldAttributes[$pkName]
+            : ($pkName !== null ? $this->{$pkName} : null);
+        $this->beginUpdate($connection)
             ->update($this->attributes)
             ->where([
                 ':tableName.`:pkName`' => $id
             ])
             ->build($connection);
-        $connection->update($this->getRawSql(), $this->queryBuilder->getParams());
+        $connection->update($this->getRawSql(), $this->getQueryBuilder()->getParams());
         $this->syncPersistedState();
         return true;
     }
@@ -189,18 +210,19 @@ abstract class ActiveRecord extends BaseObject
     public function remove(?Connection $connection = null): bool
     {
         $connection = $this->resolveConnection($connection);
-        $this->beginDelete()
+        $pkName = $this->getPkNameValue($connection);
+        $this->beginDelete($connection)
             ->where([
-                ':tableName.`:pkName`' => $this->{$this->pkName}
+                ':tableName.`:pkName`' => $pkName !== null ? $this->{$pkName} : null
             ])
             ->build($connection);
-        $connection->delete($this->getRawSql(), $this->queryBuilder->getParams());
+        $connection->delete($this->getRawSql(), $this->getQueryBuilder()->getParams());
         return true;
     }
 
     public function update(array $fields): self
     {
-        $this->queryBuilder->setCommand('update', $fields);
+        $this->getQueryBuilder()->setCommand('update', $fields);
         if ($this->allEmpty()) {
             $this->load($fields);
         }
@@ -209,13 +231,13 @@ abstract class ActiveRecord extends BaseObject
 
     public function select(array $fields): self
     {
-        $this->queryBuilder->setCommand('select', $fields);
+        $this->getQueryBuilder()->setCommand('select', $fields);
         return $this;
     }
 
     private function join(string $table, string $on, string $type = 'INNER'): self
     {
-        $this->queryBuilder->appendCommandItem('join', [
+        $this->getQueryBuilder()->appendCommandItem('join', [
             'type' => $type,
             'join' => [$table, $on]
         ]);
@@ -237,60 +259,33 @@ abstract class ActiveRecord extends BaseObject
         return $this->join($table, $on, 'RIGHT');
     }
 
-    public function where(array $cond, bool $in = false): self
+    public function where(array $cond): self
     {
-        $this->queryBuilder->appendCommandItem('where', [
-            'command' => 'initial',
-            'cond' => $cond,
-            'in' => $in
-        ]);
+        $this->getQueryBuilder()->setWhereCondition($cond);
         return $this;
     }
 
-    public function andWhere(array $cond, bool $in = false): self
+    public function andWhere(array $cond): self
     {
-        $this->queryBuilder->appendCommandItem('where', [
-            'command' => 'AND',
-            'cond' => $cond,
-            'in' => $in
-        ]);
+        $this->getQueryBuilder()->appendWhereCondition('AND', $cond);
         return $this;
     }
 
-    public function orWhere(array $cond, bool $in = false): self
+    public function orWhere(array $cond): self
     {
-        $this->queryBuilder->appendCommandItem('where', [
-            'command' => 'OR',
-            'cond' => $cond,
-            'in' => $in
-        ]);
+        $this->getQueryBuilder()->appendWhereCondition('OR', $cond);
         return $this;
-    }
-
-    public function whereIn(array $cond): self
-    {
-        return $this->where($cond, true);
-    }
-
-    public function andWhereIn(array $cond): self
-    {
-        return $this->andWhere($cond, true);
-    }
-
-    public function orWhereIn(array $cond): self
-    {
-        return $this->orWhere($cond, true);
     }
 
     public function orderByDesc(string $cols): self
     {
-        $this->queryBuilder->setCommand('orderBy', [trim($cols), 'DESC']);
+        $this->getQueryBuilder()->setCommand('orderBy', [trim($cols), 'DESC']);
         return $this;
     }
 
     public function orderByAsc(string $cols): self
     {
-        $this->queryBuilder->setCommand('orderBy', [trim($cols), 'ASC']);
+        $this->getQueryBuilder()->setCommand('orderBy', [trim($cols), 'ASC']);
         return $this;
     }
 
@@ -302,13 +297,18 @@ abstract class ActiveRecord extends BaseObject
     {
         $connection = $this->resolveConnection($connection);
         $this->build($connection);
-        $result = $connection->select($this->getRawSql(), $this->queryBuilder->getParams());
+        $result = $connection->select($this->getRawSql(), $this->getQueryBuilder()->getParams());
+        if ($this->hasJoinWithRelations()) {
+            $objects = $this->hydrateJoinedRows($result, $connection);
+            return $objects[0] ?? null;
+        }
         if ($this->as_array) {
             if (empty($result)) {
                 return null;
             }
             $object = new static([], [], $connection);
             $object->hydrate($result[0]);
+            $this->populateRelation($object, $connection);
             return $object;
         }
         if (!empty($result)) {
@@ -328,7 +328,18 @@ abstract class ActiveRecord extends BaseObject
     {
         $connection = $this->resolveConnection($connection);
         $this->build($connection);
-        $result = $connection->select($this->getRawSql(), $this->queryBuilder->getParams());
+        $result = $connection->select($this->getRawSql(), $this->getQueryBuilder()->getParams());
+        if ($this->hasJoinWithRelations()) {
+            $objects = $this->hydrateJoinedRows($result, $connection);
+            if ($this->as_array) {
+                return array_map(
+                    static fn (ActiveRecord $model): array => $model->toArray(),
+                    $objects
+                );
+            }
+
+            return Collection::factory($objects);
+        }
         if ($this->as_array) {
             return $result;
         }
@@ -355,12 +366,45 @@ abstract class ActiveRecord extends BaseObject
      */
     public function with(array|string $relations): self
     {
-        if (is_string($relations)) {
-            $this->with[] = $relations;
+        $relations = is_string($relations) ? [$relations] : $relations;
+
+        foreach ($relations as $relation) {
+            if (!is_string($relation)) {
+                continue;
+            }
+
+            $relation = trim($relation);
+            if ($relation === '') {
+                continue;
+            }
+
+            if (!in_array($relation, $this->with, true)) {
+                $this->with[] = $relation;
+            }
         }
-        if (is_array($relations)) {
-            $this->with = $relations;
+
+        return $this;
+    }
+
+    public function joinWith(array|string $relations): self
+    {
+        $relations = is_string($relations) ? [$relations] : $relations;
+
+        foreach ($relations as $relation) {
+            if (!is_string($relation)) {
+                continue;
+            }
+
+            $relation = trim($relation);
+            if ($relation === '') {
+                continue;
+            }
+
+            if (!in_array($relation, $this->joinWith, true)) {
+                $this->joinWith[] = $relation;
+            }
         }
+
         return $this;
     }
 
@@ -379,33 +423,7 @@ abstract class ActiveRecord extends BaseObject
             return;
         }
 
-        $class = new ReflectionClass($objects[0]);
-        $methods = [];
-        foreach ($class->getMethods() as $method) {
-            if ($method->isPublic()) {
-                $methods[] = $method->getName();
-            }
-        }
-        foreach ($this->with as $relation) {
-            if (in_array($relation, $methods)) {
-                $definition = $objects[0]->{$relation}();
-                if ($definition instanceof RelationDefinition) {
-                    $this->eagerLoadRelation($objects, $relation, $definition, $connection);
-                    continue;
-                }
-
-                foreach ($objects as $object) {
-                    if (isset($this->withSelects[$relation])) {
-                        $call = $object->{$relation}()
-                            ->select($this->withSelects[$relation]);
-                        $all = $call->all($connection);
-                        $object->setRelationValue($relation, ($call->isHasOne() && count($all) > 0) ? $all[0] : $all);
-                    } else {
-                        $object->{$relation};
-                    }
-                }
-            }
-        }
+        $this->populateRelationTree($objects, $this->buildWithTree($this->with), $connection);
     }
 
     public function isHasOne(): bool
@@ -419,12 +437,23 @@ abstract class ActiveRecord extends BaseObject
     public function build(?Connection $connection = null): self
     {
         $connection = $this->resolveConnection($connection);
+        $schemaFields = $this->getSchemaFields($connection);
+        $pkName = $this->getPkNameValue($connection);
         $this->extractRelationSelects();
-        $this->queryBuilder->build(
+        $this->getQueryBuilder($connection)->setCommand('joinedSelect', []);
+        $this->getQueryBuilder($connection)->setCommand('relationJoin', []);
+        $this->getQueryBuilder($connection)->setCommand('fieldAliasMap', []);
+        $this->joinWithPlan = null;
+
+        if ($this->hasJoinWithRelations()) {
+            $this->applyJoinWithPlan($connection);
+        }
+
+        $this->getQueryBuilder($connection)->build(
             $this->tableName,
-            $this->pkName,
+            $pkName,
             $this->resolveBuildPayload(),
-            Schema::getFields($this->tableName, $connection->getDb())
+            $schemaFields
         );
         return $this;
     }
@@ -437,7 +466,7 @@ abstract class ActiveRecord extends BaseObject
     {
         $connection = $this->resolveConnection($connection);
         $this->build($connection);
-        $connection->query($this->getRawSql(), $this->queryBuilder->getParams());
+        $connection->query($this->getRawSql(), $this->getQueryBuilder()->getParams());
         return true;
     }
 
@@ -447,7 +476,7 @@ abstract class ActiveRecord extends BaseObject
      */
     public static function find(?Connection $connection = null): self
     {
-        return (new static([], [], $connection))->beginSelect();
+        return (new static([], [], $connection))->beginSelect($connection);
     }
 
     /**
@@ -458,7 +487,7 @@ abstract class ActiveRecord extends BaseObject
     {
         return (new static([], [
             'many' => true
-        ], $connection))->beginSelect();
+        ], $connection))->beginSelect($connection);
     }
 
     /**
@@ -469,7 +498,7 @@ abstract class ActiveRecord extends BaseObject
     {
         return (new static([], [
             'one' => true
-        ], $connection))->beginSelect();
+        ], $connection))->beginSelect($connection);
     }
 
     /**
@@ -512,7 +541,7 @@ abstract class ActiveRecord extends BaseObject
      */
     public static function put(?Connection $connection = null): self
     {
-        return (new static([], [], $connection))->beginUpdate();
+        return (new static([], [], $connection))->beginUpdate($connection);
     }
 
     /**
@@ -548,8 +577,11 @@ abstract class ActiveRecord extends BaseObject
     {
         $model = (new static([], [], $connection));
         $payload = $fields;
-        $payload[$model->pkName] = $id;
-        $model->beginUpdate()
+        $pkName = $model->getPkNameValue($connection);
+        if ($pkName !== null) {
+            $payload[$pkName] = $id;
+        }
+        $model->beginUpdate($connection)
             ->update($fields)
             ->where([
                 ':tableName.`:pkName`' => $id
@@ -576,7 +608,7 @@ abstract class ActiveRecord extends BaseObject
      */
     public static function delete(?Connection $connection = null): self
     {
-        return (new static([], [], $connection))->beginDelete();
+        return (new static([], [], $connection))->beginDelete($connection);
     }
 
     /**
@@ -613,41 +645,41 @@ abstract class ActiveRecord extends BaseObject
             ->execute($connection);
     }
 
-    public function beginSelect(): self
+    public function beginSelect(?Connection $connection = null): self
     {
-        $this->queryBuilder->begin('SELECT');
+        $this->getQueryBuilder($connection)->begin('SELECT');
         return $this;
     }
 
-    public function beginUpdate(): self
+    public function beginUpdate(?Connection $connection = null): self
     {
-        $this->queryBuilder->begin('UPDATE');
+        $this->getQueryBuilder($connection)->begin('UPDATE');
         return $this;
     }
 
-    public function beginDelete(): self
+    public function beginDelete(?Connection $connection = null): self
     {
-        $this->queryBuilder->begin('DELETE FROM');
+        $this->getQueryBuilder($connection)->begin('DELETE FROM');
         return $this;
     }
 
-    public function beginInsert(): self
+    public function beginInsert(?Connection $connection = null): self
     {
-        $this->queryBuilder->begin('INSERT INTO');
+        $this->getQueryBuilder($connection)->begin('INSERT INTO');
         return $this;
     }
 
     public function getQueryInsert(): string
     {
-        return $this->queryBuilder->buildInsert(
-            $this->attributes,
-            Schema::getFields($this->tableName, $this->resolveConnection()->getDb())
+        return $this->getQueryBuilder()->buildInsert(
+            $this->resolvePersistedAttributes(),
+            $this->getSchemaFields()
         );
     }
 
     public function getQueryUpdate(): string
     {
-        return $this->queryBuilder->buildUpdate($this->getDirtyPersistedAttributes());
+        return $this->getQueryBuilder()->buildUpdate($this->getDirtyPersistedAttributes());
     }
 
     /**
@@ -657,7 +689,7 @@ abstract class ActiveRecord extends BaseObject
     public function getQuerySelect(): string
     {
         $this->extractRelationSelects();
-        return $this->queryBuilder->buildSelect($this->tableName);
+        return $this->getQueryBuilder()->buildSelect($this->tableName);
     }
 
     /**
@@ -665,27 +697,27 @@ abstract class ActiveRecord extends BaseObject
      */
     public function getQueryWhere(): string
     {
-        return $this->queryBuilder->buildWhere($this->tableName, $this->pkName);
+        return $this->getQueryBuilder()->buildWhere($this->tableName, $this->getPkNameValue());
     }
 
     public function getQueryJoin(): string
     {
-        return $this->queryBuilder->buildJoin($this->tableName, $this->pkName);
+        return $this->getQueryBuilder()->buildJoin($this->tableName, $this->getPkNameValue());
     }
 
     public function getQueryOrder(): string
     {
-        return $this->queryBuilder->buildOrder();
+        return $this->getQueryBuilder()->buildOrder();
     }
 
     public function getQueryAlias(): string
     {
-        return $this->queryBuilder->getQueryAlias();
+        return $this->getQueryBuilder()->getQueryAlias();
     }
 
     public function getQueryDistinct(): string
     {
-        return $this->queryBuilder->getQueryDistinct();
+        return $this->getQueryBuilder()->getQueryDistinct();
     }
 
     protected function hasManyRelation(
@@ -696,7 +728,7 @@ abstract class ActiveRecord extends BaseObject
         return new RelationDefinition(
             RelationDefinition::TYPE_MANY,
             $relatedModelClass,
-            $localKey ?? $this->pkName ?? 'id',
+            $localKey ?? $this->getPkNameValue() ?? 'id',
             $foreignKey,
             $this->runtimeConnection
         );
@@ -710,7 +742,7 @@ abstract class ActiveRecord extends BaseObject
         return new RelationDefinition(
             RelationDefinition::TYPE_ONE,
             $relatedModelClass,
-            $localKey ?? $this->pkName ?? 'id',
+            $localKey ?? $this->getPkNameValue() ?? 'id',
             $foreignKey,
             $this->runtimeConnection
         );
@@ -721,13 +753,13 @@ abstract class ActiveRecord extends BaseObject
         return $this->queryBuilder?->getRawSql() ?? '';
     }
 
-    protected function createQueryBuilder(): QueryBuilder
+    protected function createQueryBuilder(?Connection $connection = null): QueryBuilder
     {
-        return match ($this->resolveConnection()->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)) {
+        return match ($this->resolveConnection($connection)->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)) {
             Connection::TYPE_MYSQL => new MysqlQueryBuilder(),
             Connection::TYPE_SQLITE => new SqliteQueryBuilder(),
             default => throw new UnsupportedDatabaseDriverException(
-                $this->resolveConnection()->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)
+                $this->resolveConnection($connection)->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)
             ),
         };
     }
@@ -737,9 +769,8 @@ abstract class ActiveRecord extends BaseObject
         if ($connection !== null) {
             $this->runtimeConnection = $connection;
             $this->schemaFields = null;
-            if ($this->tableName !== null) {
-                $this->pkName = Schema::pkName($this->tableName, $connection->getDb());
-            }
+            $this->pkName = null;
+            $this->queryBuilder = null;
         }
         return $this;
     }
@@ -749,9 +780,41 @@ abstract class ActiveRecord extends BaseObject
         return $this->runtimeConnection;
     }
 
+    private function getQueryBuilder(?Connection $connection = null): QueryBuilder
+    {
+        if ($this->queryBuilder === null) {
+            $this->queryBuilder = $this->createQueryBuilder($connection);
+        }
+
+        return $this->queryBuilder;
+    }
+
+    private function getPkNameValue(?Connection $connection = null): ?string
+    {
+        if ($this->pkName === null && $this->tableName !== null) {
+            $this->pkName = Schema::pkName($this->tableName, $this->resolveConnection($connection)->getDb());
+        }
+
+        return $this->pkName;
+    }
+
     private function resolveConnection(?Connection $connection = null): Connection
     {
         return $connection ?? $this->runtimeConnection ?? Connection::getDefaultConnection();
+    }
+
+    private function canResolveSchemaMetadata(?Connection $connection = null): bool
+    {
+        if ($connection !== null || $this->runtimeConnection !== null) {
+            return true;
+        }
+
+        try {
+            Connection::getDefaultConnection();
+            return true;
+        } catch (DefaultConnectionNotDefinedException) {
+            return false;
+        }
     }
 
     private function allEmpty(): bool
@@ -762,21 +825,38 @@ abstract class ActiveRecord extends BaseObject
 
     private function extractRelationSelects(): void
     {
-        $selects = $this->queryBuilder->getCommand('select');
+        $this->withSelects = [];
+        $selects = $this->getQueryBuilder()->getCommand('select');
         if (!is_array($selects)) {
             return;
         }
 
-        foreach ($this->with as $with) {
-            foreach ($selects as $key => $select) {
-                if (str_starts_with($select, "{$with}.")) {
-                    $this->withSelects[$with][] = str_replace("{$with}.", "", $select);
-                    unset($selects[$key]);
+        $paths = $this->getWithPaths($this->buildWithTree($this->with));
+        usort($paths, static fn (string $left, string $right): int => strlen($right) <=> strlen($left));
+
+        foreach ($selects as $key => $select) {
+            if (!is_string($select)) {
+                continue;
+            }
+
+            foreach ($paths as $path) {
+                $prefix = $path . '.';
+                if (!str_starts_with($select, $prefix)) {
+                    continue;
                 }
+
+                $field = substr($select, strlen($prefix));
+                if ($field === '' || str_contains($field, '.')) {
+                    continue;
+                }
+
+                $this->withSelects[$path][] = $field;
+                unset($selects[$key]);
+                break;
             }
         }
 
-        $this->queryBuilder->setCommand('select', array_values($selects));
+        $this->getQueryBuilder()->setCommand('select', array_values($selects));
     }
 
     public function getAttributes(): array
@@ -930,17 +1010,43 @@ abstract class ActiveRecord extends BaseObject
         }
     }
 
-    private function getSchemaFields(): array
+    private function getSchemaFields(?Connection $connection = null): array
     {
         if ($this->tableName === null) {
             return [];
         }
 
         if ($this->schemaFields === null) {
-            $this->schemaFields = Schema::getFields($this->tableName, $this->resolveConnection()->getDb()) ?? [];
+            $this->schemaFields = Schema::getFields($this->tableName, $this->resolveConnection($connection)->getDb()) ?? [];
+            $this->normalizeStateAgainstSchema();
         }
 
         return $this->schemaFields;
+    }
+
+    private function normalizeStateAgainstSchema(): void
+    {
+        if ($this->schemaFields === null) {
+            return;
+        }
+
+        foreach ($this->attributes as $name => $value) {
+            if (in_array($name, $this->schemaFields, true)) {
+                continue;
+            }
+
+            unset($this->attributes[$name]);
+            $this->extraAttributes[$name] ??= $value;
+        }
+
+        foreach ($this->oldAttributes as $name => $value) {
+            if (in_array($name, $this->schemaFields, true)) {
+                continue;
+            }
+
+            unset($this->oldAttributes[$name]);
+            $this->extraAttributes[$name] ??= $value;
+        }
     }
 
     private function isSchemaField(string $name): bool
@@ -1007,10 +1113,17 @@ abstract class ActiveRecord extends BaseObject
         return !empty($this->attributes) && empty($this->oldAttributes);
     }
 
+    private function resolvePersistedAttributes(): array
+    {
+        $fields = array_flip($this->getSchemaFields());
+
+        return array_intersect_key($this->attributes, $fields);
+    }
+
     private function resolveBuildPayload(): array
     {
-        return match ($this->queryBuilder->getCommand('begin')) {
-            'INSERT INTO' => $this->attributes,
+        return match ($this->getQueryBuilder()->getCommand('begin')) {
+            'INSERT INTO' => $this->resolvePersistedAttributes(),
             'UPDATE' => $this->getDirtyPersistedAttributes(),
             default => [],
         };
@@ -1020,10 +1133,13 @@ abstract class ActiveRecord extends BaseObject
         array $objects,
         string $relationName,
         RelationDefinition $definition,
-        ?Connection $connection = null
+        ?Connection $connection = null,
+        ?string $relationPath = null
     ): void {
-        if (isset($this->withSelects[$relationName])) {
-            $definition->select($this->withSelects[$relationName]);
+        $relationPath ??= $relationName;
+
+        if (isset($this->withSelects[$relationPath])) {
+            $definition->select($this->withSelects[$relationPath]);
         }
 
         $definition->applyRuntimeConnection($connection ?? $this->runtimeConnection);
@@ -1066,10 +1182,16 @@ abstract class ActiveRecord extends BaseObject
         }
     }
 
-    private function materializeDefinedRelation(RelationDefinition $definition, string $relationName): mixed
+    private function materializeDefinedRelation(
+        RelationDefinition $definition,
+        string $relationName,
+        ?string $relationPath = null
+    ): mixed
     {
-        if (isset($this->withSelects[$relationName])) {
-            $definition->select($this->withSelects[$relationName]);
+        $relationPath ??= $relationName;
+
+        if (isset($this->withSelects[$relationPath])) {
+            $definition->select($this->withSelects[$relationPath]);
         }
 
         $definition->applyRuntimeConnection($this->runtimeConnection);
@@ -1100,6 +1222,450 @@ abstract class ActiveRecord extends BaseObject
         }
 
         return $dirty;
+    }
+
+    private function hasJoinWithRelations(): bool
+    {
+        return !empty($this->joinWith);
+    }
+
+    private function applyJoinWithPlan(Connection $connection): void
+    {
+        $this->joinWithPlan = $this->buildJoinWithPlan($connection);
+        $this->getQueryBuilder()->setCommand('joinedSelect', $this->joinWithPlan['selects']);
+        $this->getQueryBuilder()->setCommand('relationJoin', $this->joinWithPlan['joins']);
+        $this->getQueryBuilder()->setCommand('fieldAliasMap', $this->joinWithPlan['fieldAliasMap']);
+    }
+
+    private function buildJoinWithPlan(Connection $connection): array
+    {
+        $rootNode = [
+            'path' => '',
+            'relationName' => null,
+            'parentPath' => null,
+            'tableName' => $this->tableName,
+            'alias' => $this->tableName,
+            'pkName' => $this->pkName,
+            'modelClass' => static::class,
+            'fields' => $this->getSchemaFields(),
+            'fieldAliases' => $this->buildJoinFieldAliases('', $this->getSchemaFields()),
+        ];
+
+        $nodes = [];
+        $this->appendJoinWithNodes(
+            $nodes,
+            $this->buildWithTree($this->joinWith),
+            $this,
+            $rootNode,
+            $connection
+        );
+
+        return [
+            'root' => $rootNode,
+            'nodes' => $nodes,
+            'selects' => $this->buildJoinSelects($rootNode, $nodes),
+            'joins' => $this->buildJoinCommands($nodes),
+            'fieldAliasMap' => $this->buildJoinFieldReferenceMap($nodes),
+        ];
+    }
+
+    private function buildJoinFieldReferenceMap(array $nodes): array
+    {
+        $map = [];
+        $tableCounts = [];
+
+        foreach ($nodes as $node) {
+            $map[$node['path']] = $node['alias'];
+            $tableCounts[$node['tableName']] = ($tableCounts[$node['tableName']] ?? 0) + 1;
+        }
+
+        foreach ($nodes as $node) {
+            if (($tableCounts[$node['tableName']] ?? 0) === 1) {
+                $map[$node['tableName']] = $node['alias'];
+            }
+        }
+
+        return $map;
+    }
+
+    private function appendJoinWithNodes(
+        array &$nodes,
+        array $tree,
+        ActiveRecord $parentModel,
+        array $parentNode,
+        Connection $connection,
+        string $prefix = ''
+    ): void {
+        foreach ($tree as $relationName => $children) {
+            $path = $prefix === '' ? $relationName : $prefix . '.' . $relationName;
+
+            if (!$parentModel->isRelationMethod($relationName)) {
+                throw new BaseException("joinWith relation '{$path}' is not defined");
+            }
+
+            $definition = $parentModel->{$relationName}();
+            if (!$definition instanceof RelationDefinition) {
+                throw new BaseException("joinWith only supports RelationDefinition relations for '{$path}'");
+            }
+
+            $relatedModelClass = $definition->getRelatedModelClass();
+            /** @var ActiveRecord $relatedModel */
+            $relatedModel = new $relatedModelClass([], [], $connection);
+            $alias = 'jr__' . str_replace('.', '__', $path);
+            $fields = $relatedModel->getSchemaFields();
+
+            $node = [
+                'path' => $path,
+                'relationName' => $relationName,
+                'parentPath' => $parentNode['path'],
+                'tableName' => $relatedModel->getTableName(),
+                'alias' => $alias,
+                'pkName' => $relatedModel->getPkName(),
+                'modelClass' => $relatedModelClass,
+                'fields' => $fields,
+                'fieldAliases' => $this->buildJoinFieldAliases($path, $fields),
+                'joinType' => $definition->getJoinType(),
+                'joinTable' => $relatedModel->getTableName() . ' AS ' . $alias,
+                'joinCondition' => $this->buildJoinCondition($definition, $parentNode, $alias),
+                'definition' => $definition,
+            ];
+
+            $nodes[] = $node;
+
+            if (!empty($children)) {
+                $this->appendJoinWithNodes($nodes, $children, $relatedModel, $node, $connection, $path);
+            }
+        }
+    }
+
+    private function buildJoinFieldAliases(string $path, array $fields): array
+    {
+        $aliases = [];
+
+        foreach ($fields as $field) {
+            $aliases[$field] = $this->buildJoinFieldAlias($path, $field);
+        }
+
+        return $aliases;
+    }
+
+    private function buildJoinFieldAlias(string $path, string $field): string
+    {
+        $pathKey = $path === '' ? 'root' : str_replace('.', '__', $path);
+        return '__adg__' . $pathKey . '__' . $field;
+    }
+
+    private function buildJoinCondition(RelationDefinition $definition, array $parentNode, string $alias): string
+    {
+        $parentReference = $parentNode['path'] === ''
+            ? $parentNode['tableName']
+            : $parentNode['alias'];
+
+        return sprintf(
+            '%s.%s = %s.%s',
+            $alias,
+            $definition->getForeignKey(),
+            $parentReference,
+            $definition->getLocalKey()
+        );
+    }
+
+    private function buildJoinSelects(array $rootNode, array $nodes): array
+    {
+        $selects = $this->buildNodeJoinSelects($rootNode);
+
+        foreach ($nodes as $node) {
+            foreach ($this->buildNodeJoinSelects($node) as $select) {
+                $selects[] = $select;
+            }
+        }
+
+        return $selects;
+    }
+
+    private function buildNodeJoinSelects(array $node): array
+    {
+        $reference = $node['path'] === ''
+            ? $node['tableName']
+            : $node['alias'];
+        $selects = [];
+
+        foreach ($node['fieldAliases'] as $field => $alias) {
+            $selects[] = sprintf('%s.%s AS %s', $reference, $field, $alias);
+        }
+
+        return $selects;
+    }
+
+    private function buildJoinCommands(array $nodes): array
+    {
+        return array_map(
+            static fn (array $node): array => [
+                'type' => $node['joinType'],
+                'join' => [$node['joinTable'], $node['joinCondition']],
+            ],
+            $nodes
+        );
+    }
+
+    private function hydrateJoinedRows(array $rows, Connection $connection): array
+    {
+        if (empty($rows)) {
+            return [];
+        }
+
+        $plan = $this->joinWithPlan ?? $this->buildJoinWithPlan($connection);
+        $roots = [];
+        $nodeIndex = [];
+
+        foreach ($rows as $row) {
+            $rootData = $this->extractJoinedNodeData($row, $plan['root']);
+            if (!$this->rowHasJoinedNodeData($rootData)) {
+                continue;
+            }
+
+            $rootKey = $this->buildJoinedIdentityKey($plan['root'], $rootData);
+            if (!isset($roots[$rootKey])) {
+                $root = new static([], [], $connection);
+                $root->hydrate($rootData);
+                $roots[$rootKey] = $root;
+            } else {
+                $root = $roots[$rootKey];
+            }
+
+            $instances = ['' => $root];
+            foreach ($plan['nodes'] as $node) {
+                $parent = $instances[$node['parentPath']] ?? null;
+                if (!$parent instanceof ActiveRecord) {
+                    continue;
+                }
+
+                $data = $this->extractJoinedNodeData($row, $node);
+                if (!$this->rowHasJoinedNodeData($data)) {
+                    $this->initializeJoinedRelation($parent, $node);
+                    $instances[$node['path']] = null;
+                    continue;
+                }
+
+                $cacheKey = spl_object_id($parent) . '::' . $this->buildJoinedIdentityKey($node, $data);
+                if (!isset($nodeIndex[$node['path']][$cacheKey])) {
+                    $child = $this->createJoinedModel($node, $data, $connection);
+                    $this->attachJoinedModel($parent, $node, $child);
+                    $nodeIndex[$node['path']][$cacheKey] = $child;
+                }
+
+                $instances[$node['path']] = $nodeIndex[$node['path']][$cacheKey];
+            }
+        }
+
+        return array_values($roots);
+    }
+
+    private function extractJoinedNodeData(array $row, array $node): array
+    {
+        $data = [];
+
+        foreach ($node['fieldAliases'] as $field => $alias) {
+            $data[$field] = $row[$alias] ?? null;
+        }
+
+        return $data;
+    }
+
+    private function rowHasJoinedNodeData(array $data): bool
+    {
+        foreach ($data as $value) {
+            if ($value !== null) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function buildJoinedIdentityKey(array $node, array $data): string
+    {
+        $pkName = $node['pkName'] ?? null;
+        if ($pkName !== null && array_key_exists($pkName, $data) && $data[$pkName] !== null) {
+            return (string) $data[$pkName];
+        }
+
+        return serialize($data);
+    }
+
+    private function createJoinedModel(array $node, array $data, Connection $connection): ActiveRecord
+    {
+        $modelClass = $node['modelClass'];
+        /** @var ActiveRecord $model */
+        $model = new $modelClass([], [], $connection);
+        $model->hydrate($data);
+
+        return $model;
+    }
+
+    private function initializeJoinedRelation(ActiveRecord $parent, array $node): void
+    {
+        if (array_key_exists($node['relationName'], $parent->getRelations())) {
+            return;
+        }
+
+        $parent->setRelationValue(
+            $node['relationName'],
+            $node['definition']->isHasOne() ? null : Collection::factory()
+        );
+    }
+
+    private function attachJoinedModel(ActiveRecord $parent, array $node, ActiveRecord $child): void
+    {
+        if ($node['definition']->isHasOne()) {
+            $parent->setRelationValue($node['relationName'], $child);
+            return;
+        }
+
+        $relations = $parent->getRelations();
+        $collection = $relations[$node['relationName']] ?? null;
+        if (!$collection instanceof Collection) {
+            $collection = Collection::factory();
+            $parent->setRelationValue($node['relationName'], $collection);
+        }
+
+        $collection[] = $child;
+    }
+
+    private function buildWithTree(array $relations): array
+    {
+        $tree = [];
+
+        foreach ($relations as $relation) {
+            if (!is_string($relation) || $relation === '') {
+                continue;
+            }
+
+            $cursor = &$tree;
+            foreach (explode('.', $relation) as $segment) {
+                $segment = trim($segment);
+                if ($segment === '') {
+                    continue;
+                }
+
+                if (!array_key_exists($segment, $cursor)) {
+                    $cursor[$segment] = [];
+                }
+
+                $cursor = &$cursor[$segment];
+            }
+
+            unset($cursor);
+        }
+
+        return $tree;
+    }
+
+    private function getWithPaths(array $tree, string $prefix = ''): array
+    {
+        $paths = [];
+
+        foreach ($tree as $relation => $children) {
+            $path = $prefix === '' ? $relation : $prefix . '.' . $relation;
+            $paths[] = $path;
+
+            foreach ($this->getWithPaths($children, $path) as $childPath) {
+                $paths[] = $childPath;
+            }
+        }
+
+        return $paths;
+    }
+
+    private function populateRelationTree(
+        array $objects,
+        array $tree,
+        ?Connection $connection = null,
+        string $prefix = ''
+    ): void {
+        if (empty($objects) || empty($tree)) {
+            return;
+        }
+
+        foreach ($tree as $relationName => $children) {
+            if (!$objects[0]->isRelationMethod($relationName)) {
+                continue;
+            }
+
+            $relationPath = $prefix === '' ? $relationName : $prefix . '.' . $relationName;
+            $relation = $objects[0]->{$relationName}();
+
+            if ($relation instanceof RelationDefinition) {
+                $this->eagerLoadRelation($objects, $relationName, $relation, $connection, $relationPath);
+            } else {
+                $this->populateLegacyRelation($objects, $relationName, $connection, $relationPath);
+            }
+
+            if (empty($children)) {
+                continue;
+            }
+
+            $relatedObjects = $this->collectRelatedObjects($objects, $relationName);
+            $this->populateRelationTree($relatedObjects, $children, $connection, $relationPath);
+        }
+    }
+
+    private function populateLegacyRelation(
+        array $objects,
+        string $relationName,
+        ?Connection $connection = null,
+        string $relationPath = ''
+    ): void {
+        foreach ($objects as $object) {
+            $call = $object->{$relationName}();
+
+            if ($call instanceof ActiveRecord && isset($this->withSelects[$relationPath])) {
+                $call->select($this->withSelects[$relationPath]);
+                $all = $call->all($connection);
+                $object->setRelationValue(
+                    $relationName,
+                    ($call->isHasOne() && count($all) > 0) ? $all[0] : $all
+                );
+                continue;
+            }
+
+            $object->{$relationName};
+        }
+    }
+
+    private function collectRelatedObjects(array $objects, string $relationName): array
+    {
+        $relatedObjects = [];
+
+        foreach ($objects as $object) {
+            $relation = $object->getRelations()[$relationName] ?? null;
+
+            if ($relation instanceof ActiveRecord) {
+                $relatedObjects[] = $relation;
+                continue;
+            }
+
+            if ($relation instanceof Collection) {
+                foreach ($relation as $item) {
+                    if ($item instanceof ActiveRecord) {
+                        $relatedObjects[] = $item;
+                    }
+                }
+                continue;
+            }
+
+            if (!is_array($relation)) {
+                continue;
+            }
+
+            foreach ($relation as $item) {
+                if ($item instanceof ActiveRecord) {
+                    $relatedObjects[] = $item;
+                }
+            }
+        }
+
+        return $relatedObjects;
     }
 
 }
