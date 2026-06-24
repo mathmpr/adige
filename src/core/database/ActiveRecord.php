@@ -6,6 +6,9 @@ use Adige\core\BaseObject;
 use Adige\core\BaseException;
 use Adige\helpers\Str;
 use Adige\core\collection\Collection;
+use Adige\core\database\dialects\mysql\MysqlQueryBuilder;
+use Adige\core\database\dialects\sqlite\SqliteQueryBuilder;
+use Adige\core\database\exceptions\UnsupportedDatabaseDriverException;
 use ReflectionClass;
 use Throwable;
 
@@ -21,69 +24,76 @@ use Throwable;
  */
 abstract class ActiveRecord extends BaseObject
 {
+    private static array $serializationStack = [];
+
     abstract public static function tableName(): string;
 
     private array $attributes = [];
 
-    private array $changes = [];
+    private array $extraAttributes = [];
 
-    private array $news = [];
+    private array $relations = [];
+
+    private array $oldAttributes = [];
 
     private array $with = [];
-
-    protected array $hidden = [];
 
     private array $withSelects = [];
 
     private array $options;
 
-    private array $needsToArray = [];
-
     private ?string $tableName = null;
 
     private ?string $pkName = null;
 
-    private array $queryCommands = [];
-
-    private array $queryParams = [];
-
-    private int $argCount = 0;
-
-    public string $rawSql = '';
-
-    private ?Connection $connection = null;
-
     private bool $as_array = false;
+
+    private ?QueryBuilder $queryBuilder = null;
+
+    private ?Connection $runtimeConnection = null;
+
+    private ?array $schemaFields = null;
 
     /**
      * @param array $props
      * @param array $options
+     * @param Connection|null $connection
      * @throws BaseException
      */
-    public function __construct(array $props = [], array $options = [])
+    public function __construct(array $props = [], array $options = [], ?Connection $connection = null)
     {
         $this->options = $options;
         $this->init();
-        if (!$this->connection) {
-            $this->connection = Connection::getDefaultConnection();
-        }
+        $this->setRuntimeConnection($connection);
         try {
             $class = new ReflectionClass($this);
             $this->tableName = $class->getMethod('tableName')->invoke(null);
         } catch (Throwable $exception) {
             throw new BaseException('Caller no implements ActiveRecord', 0, $exception);
         }
-        $this->pkName = Schema::pkName($this->tableName, $this->connection->getDb());
+        $this->pkName = Schema::pkName($this->tableName, $this->resolveConnection()->getDb());
+        $this->queryBuilder = $this->createQueryBuilder();
         $this->load($props);
         parent::__construct();
     }
 
     public function load(array $props = []): void
     {
-        $fields = Schema::getFields($this->tableName, $this->connection->getDb());
         foreach ($props as $prop => $value) {
-            if (in_array($prop, $fields, true)) {
-                $this->{$prop} = $value;
+            if ($this->isSchemaField($prop)) {
+                $this->attributes[$prop] = $value;
+            }
+        }
+    }
+
+    public function hydrate(array $props = []): void
+    {
+        $this->load($props);
+        $this->oldAttributes = [];
+
+        foreach ($this->attributes as $name => $value) {
+            if ($this->isSchemaField($name)) {
+                $this->oldAttributes[$name] = $value;
             }
         }
     }
@@ -95,96 +105,102 @@ abstract class ActiveRecord extends BaseObject
      */
     public function __get($name)
     {
+        if ($name === 'rawSql') {
+            return $this->getRawSql();
+        }
+
         if (method_exists($this, 'get' . Str::camel($name, '_'))) {
             return $this->{'get' . Str::camel($name, '_')}();
         }
-        if (method_exists($this, $name) && !isset($this->attributes[$name])) {
-            $call = $this->{$name}();
-            if ($call instanceof ActiveRecord) {
-                $all = $call->all();
-                $this->needsToArray[] = $name;
-                $this->attributes[$name] = (($call->isHasOne() && count($all) > 0) ? $all[0] : $all);
-            }
-            if ($call instanceof Collection) {
-                $this->attributes[$name] = $call;
-            }
+
+        if (array_key_exists($name, $this->attributes)) {
+            return $this->attributes[$name];
         }
-        return $this->attributes[$name] ?? null;
+
+        if (array_key_exists($name, $this->extraAttributes)) {
+            return $this->extraAttributes[$name];
+        }
+
+        if (array_key_exists($name, $this->relations)) {
+            return $this->relations[$name];
+        }
+
+        if ($this->isRelationMethod($name)) {
+            return $this->resolveRelation($name);
+        }
+
+        return null;
     }
 
     public function __set($name, $value): void
     {
-        if (isset($this->attributes[$name])) {
-            $this->changes[$name] = $this->attributes[$name];
+        if ($this->isSchemaField($name) || array_key_exists($name, $this->attributes)) {
+            $this->attributes[$name] = $value;
+            return;
         }
-        if (!isset($this->attributes[$name])) {
-            $this->news[$name] = $value;
+
+        if ($this->isRelationMethod($name) && $this->isRelationValue($value)) {
+            $this->setRelationValue($name, $value);
+            return;
         }
-        $this->attributes[$name] = $value;
+
+        $this->extraAttributes[$name] = $value;
     }
 
     /**
      * @return bool
      * @throws BaseException
      */
-    public function save(): bool
+    public function save(?Connection $connection = null): bool
     {
-        if ($this->{$this->pkName}) {
-            $id = array_key_exists($this->pkName, $this->changes)
-                ? $this->changes[$this->pkName]
-                : $this->{$this->pkName};
-            $this->beginUpdate()
-                ->update($this->attributes)
-                ->where([
-                    ':tableName.`:pkName`' => $id
-                ])
-                ->build();
-            $result = $this->connection->update($this->rawSql, $this->queryParams);
-            if ($exception = $this->connection->getLastException()) {
-                throw new BaseException($exception['message'], 0);
-            }
-            $this->news = [];
-            $this->changes = [];
-            return $result;
-        } else {
+        $connection = $this->resolveConnection($connection);
+
+        if ($this->isNewRecord()) {
             $this->beginInsert()
-                ->build();
-            $result = $this->connection->insert($this->rawSql, $this->queryParams);
-            if ($exception = $this->connection->getLastException()) {
-                throw new BaseException($exception['message'], 0);
-            }
+                ->build($connection);
+            $result = $connection->insert($this->getRawSql(), $this->queryBuilder->getParams());
             $this->{$this->pkName} = $result;
-            $this->news = [];
-            $this->changes = [];
+            $this->syncPersistedState();
             return true;
         }
+
+        if (!$this->hasDirtyPersistedAttributes()) {
+            return true;
+        }
+
+        $id = array_key_exists($this->pkName, $this->oldAttributes)
+            ? $this->oldAttributes[$this->pkName]
+            : $this->{$this->pkName};
+        $this->beginUpdate()
+            ->update($this->attributes)
+            ->where([
+                ':tableName.`:pkName`' => $id
+            ])
+            ->build($connection);
+        $connection->update($this->getRawSql(), $this->queryBuilder->getParams());
+        $this->syncPersistedState();
+        return true;
     }
 
     /**
      * @return bool|null
      * @throws BaseException
      */
-    public function remove(): bool
+    public function remove(?Connection $connection = null): bool
     {
+        $connection = $this->resolveConnection($connection);
         $this->beginDelete()
             ->where([
                 ':tableName.`:pkName`' => $this->{$this->pkName}
             ])
-            ->build();
-        $result = $this->connection->query($this->rawSql, $this->queryParams);
-        if (!$result) {
-            throw new BaseException(
-                $this->connection->getLastException(
-                )['message'] ?? 'Query ' . $this->rawSql . ' have one or more errors'
-                , 0
-            );
-        }
+            ->build($connection);
+        $connection->delete($this->getRawSql(), $this->queryBuilder->getParams());
         return true;
     }
 
     public function update(array $fields): self
     {
-        $this->queryCommands['update'] = $fields;
+        $this->queryBuilder->setCommand('update', $fields);
         if ($this->allEmpty()) {
             $this->load($fields);
         }
@@ -193,16 +209,16 @@ abstract class ActiveRecord extends BaseObject
 
     public function select(array $fields): self
     {
-        $this->queryCommands['select'] = $fields;
+        $this->queryBuilder->setCommand('select', $fields);
         return $this;
     }
 
     private function join(string $table, string $on, string $type = 'INNER'): self
     {
-        $this->queryCommands['join'][] = [
+        $this->queryBuilder->appendCommandItem('join', [
             'type' => $type,
             'join' => [$table, $on]
-        ];
+        ]);
         return $this;
     }
 
@@ -223,31 +239,31 @@ abstract class ActiveRecord extends BaseObject
 
     public function where(array $cond, bool $in = false): self
     {
-        $this->queryCommands['where'][] = [
+        $this->queryBuilder->appendCommandItem('where', [
             'command' => 'initial',
             'cond' => $cond,
             'in' => $in
-        ];
+        ]);
         return $this;
     }
 
     public function andWhere(array $cond, bool $in = false): self
     {
-        $this->queryCommands['where'][] = [
+        $this->queryBuilder->appendCommandItem('where', [
             'command' => 'AND',
             'cond' => $cond,
             'in' => $in
-        ];
+        ]);
         return $this;
     }
 
     public function orWhere(array $cond, bool $in = false): self
     {
-        $this->queryCommands['where'][] = [
+        $this->queryBuilder->appendCommandItem('where', [
             'command' => 'OR',
             'cond' => $cond,
             'in' => $in
-        ];
+        ]);
         return $this;
     }
 
@@ -268,13 +284,13 @@ abstract class ActiveRecord extends BaseObject
 
     public function orderByDesc(string $cols): self
     {
-        $this->queryCommands['orderBy'] = [trim($cols), 'DESC'];
+        $this->queryBuilder->setCommand('orderBy', [trim($cols), 'DESC']);
         return $this;
     }
 
     public function orderByAsc(string $cols): self
     {
-        $this->queryCommands['orderBy'] = [trim($cols), 'ASC'];
+        $this->queryBuilder->setCommand('orderBy', [trim($cols), 'ASC']);
         return $this;
     }
 
@@ -282,19 +298,23 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public function one(): ?self
+    public function one(?Connection $connection = null): ?self
     {
-        $this->build();
-        $result = $this->connection->select($this->rawSql, $this->queryParams);
+        $connection = $this->resolveConnection($connection);
+        $this->build($connection);
+        $result = $connection->select($this->getRawSql(), $this->queryBuilder->getParams());
         if ($this->as_array) {
-            return !empty($result) ? new static($result[0]) : null;
-        }
-        if ($exception = $this->connection->getLastException()) {
-            throw new BaseException($exception['message'], 0);
+            if (empty($result)) {
+                return null;
+            }
+            $object = new static([], [], $connection);
+            $object->hydrate($result[0]);
+            return $object;
         }
         if (!empty($result)) {
-            $object = new static($result[0]);
-            $this->populateRelation($object);
+            $object = new static([], [], $connection);
+            $object->hydrate($result[0]);
+            $this->populateRelation($object, $connection);
             return $object;
         }
         return null;
@@ -304,21 +324,24 @@ abstract class ActiveRecord extends BaseObject
      * @return Collection|array|null
      * @throws BaseException
      */
-    public function all(): Collection|array|null
+    public function all(?Connection $connection = null): Collection|array|null
     {
-        $this->build();
-        $result = $this->connection->select($this->rawSql, $this->queryParams);
+        $connection = $this->resolveConnection($connection);
+        $this->build($connection);
+        $result = $connection->select($this->getRawSql(), $this->queryBuilder->getParams());
         if ($this->as_array) {
             return $result;
         }
         $return = Collection::factory();
-        if ($exception = $this->connection->getLastException()) {
-            throw new BaseException($exception['message'], 0);
-        }
         if (!empty($result)) {
+            $objects = [];
             foreach ($result as $item) {
-                $object = new static($item);
-                $this->populateRelation($object);
+                $object = new static([], [], $connection);
+                $object->hydrate($item);
+                $objects[] = $object;
+            }
+            $this->populateRelations($objects, $connection);
+            foreach ($objects as $object) {
                 $return[] = $object;
             }
             return $return;
@@ -345,9 +368,18 @@ abstract class ActiveRecord extends BaseObject
      * @param ActiveRecord $object
      * @return void
      */
-    private function populateRelation(ActiveRecord $object): void
+    private function populateRelation(ActiveRecord $object, ?Connection $connection = null): void
     {
-        $class = new ReflectionClass($object);
+        $this->populateRelations([$object], $connection);
+    }
+
+    private function populateRelations(array $objects, ?Connection $connection = null): void
+    {
+        if (empty($objects) || empty($this->with)) {
+            return;
+        }
+
+        $class = new ReflectionClass($objects[0]);
         $methods = [];
         foreach ($class->getMethods() as $method) {
             if ($method->isPublic()) {
@@ -356,14 +388,21 @@ abstract class ActiveRecord extends BaseObject
         }
         foreach ($this->with as $relation) {
             if (in_array($relation, $methods)) {
-                if (isset($this->withSelects[$relation])) {
-                    $call = $object->{$relation}()
-                        ->select($this->withSelects[$relation]);
-                    $all = $call->all();
-                    $object->needsToArray[] = $relation;
-                    $object->{$relation} = (($call->isHasOne() && count($all) > 0) ? $all[0] : $all);
-                } else {
-                    $object->{$relation};
+                $definition = $objects[0]->{$relation}();
+                if ($definition instanceof RelationDefinition) {
+                    $this->eagerLoadRelation($objects, $relation, $definition, $connection);
+                    continue;
+                }
+
+                foreach ($objects as $object) {
+                    if (isset($this->withSelects[$relation])) {
+                        $call = $object->{$relation}()
+                            ->select($this->withSelects[$relation]);
+                        $all = $call->all($connection);
+                        $object->setRelationValue($relation, ($call->isHasOne() && count($all) > 0) ? $all[0] : $all);
+                    } else {
+                        $object->{$relation};
+                    }
                 }
             }
         }
@@ -377,59 +416,16 @@ abstract class ActiveRecord extends BaseObject
     /**
      * @return $this
      */
-    public function build(): self
+    public function build(?Connection $connection = null): self
     {
-        $this->argCount = 0;
-        $this->queryParams = [];
-        if (isset($this->queryCommands['begin'])) {
-            switch ($this->queryCommands['begin']) {
-                case 'INSERT INTO':
-                    $this->rawSql = trim(
-                        sprintf(
-                            "%s {$this->tableName} %s",
-                            $this->queryCommands['begin'],
-                            $this->queryInsert,
-                        )
-                    );
-                    break;
-                case 'SELECT':
-                    $this->rawSql = trim(
-                        sprintf(
-                            "%s %s %s FROM {$this->tableName} %s %s %s %s",
-                            $this->queryCommands['begin'],
-                            $this->queryDistinct,
-                            $this->querySelect,
-                            $this->queryAlias,
-                            $this->queryJoin,
-                            $this->queryWhere,
-                            $this->queryOrder
-                        )
-                    );
-                    break;
-                case 'UPDATE':
-                    $this->rawSql = trim(
-                        sprintf(
-                            "%s {$this->tableName} %s SET %s %s",
-                            $this->queryCommands['begin'],
-                            $this->queryAlias,
-                            $this->queryUpdate,
-                            $this->queryWhere,
-                        )
-                    );
-                    break;
-                case 'DELETE FROM':
-                    $this->rawSql = trim(
-                        sprintf(
-                            "%s {$this->tableName} %s %s",
-                            $this->queryCommands['begin'],
-                            $this->queryAlias,
-                            $this->queryWhere,
-                        )
-                    );
-                    break;
-            }
-        }
-
+        $connection = $this->resolveConnection($connection);
+        $this->extractRelationSelects();
+        $this->queryBuilder->build(
+            $this->tableName,
+            $this->pkName,
+            $this->resolveBuildPayload(),
+            Schema::getFields($this->tableName, $connection->getDb())
+        );
         return $this;
     }
 
@@ -437,17 +433,11 @@ abstract class ActiveRecord extends BaseObject
      * @return bool|null
      * @throws BaseException
      */
-    public function execute(): ?bool
+    public function execute(?Connection $connection = null): ?bool
     {
-        $this->build();
-        $result = $this->connection->query($this->rawSql, $this->queryParams);
-        if (!$result) {
-            throw new BaseException(
-                $this->connection->getLastException(
-                )['message'] ?? 'Query ' . $this->rawSql . ' have one or more errors'
-                , 0
-            );
-        }
+        $connection = $this->resolveConnection($connection);
+        $this->build($connection);
+        $connection->query($this->getRawSql(), $this->queryBuilder->getParams());
         return true;
     }
 
@@ -455,31 +445,31 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public static function find(): self
+    public static function find(?Connection $connection = null): self
     {
-        return (new static([]))->beginSelect();
+        return (new static([], [], $connection))->beginSelect();
     }
 
     /**
      * @return static
      * @throws BaseException
      */
-    public static function hasMany(): self
+    public static function hasMany(?Connection $connection = null): self
     {
         return (new static([], [
             'many' => true
-        ]))->beginSelect();
+        ], $connection))->beginSelect();
     }
 
     /**
      * @return static
      * @throws BaseException
      */
-    public static function hasOne(): self
+    public static function hasOne(?Connection $connection = null): self
     {
         return (new static([], [
             'one' => true
-        ]))->beginSelect();
+        ], $connection))->beginSelect();
     }
 
     /**
@@ -487,14 +477,14 @@ abstract class ActiveRecord extends BaseObject
      * @return static|null
      * @throws BaseException
      */
-    public static function findById($id): ?self
+    public static function findById($id, ?Connection $connection = null): ?self
     {
-        return static::find()
+        return static::find($connection)
             ->select(['*'])
             ->where([
                 ':tableName.`:pkName`' => $id
             ])
-            ->one();
+            ->one($connection);
     }
 
     /**
@@ -502,16 +492,16 @@ abstract class ActiveRecord extends BaseObject
      * @return static|null
      * @throws BaseException
      */
-    public static function findAll($cond): ?self
+    public static function findAll($cond, ?Connection $connection = null): ?self
     {
         if (is_scalar($cond)) {
-            return static::findById($cond);
+            return static::findById($cond, $connection);
         }
         if (is_array($cond)) {
-            return static::find()
+            return static::find($connection)
                 ->select(['*'])
                 ->where($cond)
-                ->one();
+                ->one($connection);
         }
         return null;
     }
@@ -520,43 +510,52 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public static function put(): self
+    public static function put(?Connection $connection = null): self
     {
-        return (new static([]))->beginUpdate();
+        return (new static([], [], $connection))->beginUpdate();
     }
 
     /**
      * @param $cond
      * @param array $fields
+     * @param Connection|null $connection
      * @return static
      * @throws BaseException
      */
-    public static function putAll($cond, array $fields): self
+    public static function putAll($cond, array $fields, ?Connection $connection = null): self
     {
-        $model = (new static($fields));
         if (is_scalar($cond)) {
-            $model->{$model->pkName} = $cond;
-            $model->save();
-            return $model;
+            return static::putById($cond, $fields, $connection);
         }
+
+        $model = (new static([], [], $connection));
         $model->beginUpdate()
             ->update($fields)
             ->where($cond)
-            ->execute();
+            ->execute($connection);
+        $model->load($fields);
         return $model;
     }
 
     /**
      * @param $id
      * @param array $fields
+     * @param Connection|null $connection
      * @return static
      * @throws BaseException
      */
-    public static function putById($id, array $fields): self
+    public static function putById($id, array $fields, ?Connection $connection = null): self
     {
-        $model = (new static($fields));
-        $model->{$model->pkName} = $id;
-        $model->save();
+        $model = (new static([], [], $connection));
+        $payload = $fields;
+        $payload[$model->pkName] = $id;
+        $model->beginUpdate()
+            ->update($fields)
+            ->where([
+                ':tableName.`:pkName`' => $id
+            ])
+            ->execute($connection);
+        $model->hydrate($payload);
         return $model;
     }
 
@@ -564,10 +563,10 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public static function create(array $fields): self
+    public static function create(array $fields, ?Connection $connection = null): self
     {
-        $model = (new static($fields));
-        $model->save();
+        $model = (new static($fields, [], $connection));
+        $model->save($connection);
         return $model;
     }
 
@@ -575,259 +574,243 @@ abstract class ActiveRecord extends BaseObject
      * @return static
      * @throws BaseException
      */
-    public static function delete(): self
+    public static function delete(?Connection $connection = null): self
     {
-        return (new static([]))->beginDelete();
+        return (new static([], [], $connection))->beginDelete();
     }
 
     /**
      * @param $cond
+     * @param Connection|null $connection
      * @return bool
      * @throws BaseException
      */
-    public static function deleteAll($cond): bool
+    public static function deleteAll($cond, ?Connection $connection = null): bool
     {
         if (is_scalar($cond)) {
-            return static::deleteById($cond);
+            return static::deleteById($cond, $connection);
         }
         if (is_array($cond)) {
-            return static::delete()
+            return static::delete($connection)
                 ->where($cond)
-                ->execute();
+                ->execute($connection);
         }
         return false;
     }
 
     /**
      * @param $id
+     * @param Connection|null $connection
      * @return bool
      * @throws BaseException
      */
-    public static function deleteById($id): bool
+    public static function deleteById($id, ?Connection $connection = null): bool
     {
-        return static::delete()
+        return static::delete($connection)
             ->where([
                 ':tableName.`:pkName`' => $id
             ])
-            ->execute();
+            ->execute($connection);
     }
 
     public function beginSelect(): self
     {
-        $this->queryCommands['begin'] = 'SELECT';
+        $this->queryBuilder->begin('SELECT');
         return $this;
     }
 
     public function beginUpdate(): self
     {
-        $this->queryCommands['begin'] = 'UPDATE';
+        $this->queryBuilder->begin('UPDATE');
         return $this;
     }
 
     public function beginDelete(): self
     {
-        $this->queryCommands['begin'] = 'DELETE FROM';
+        $this->queryBuilder->begin('DELETE FROM');
         return $this;
     }
 
     public function beginInsert(): self
     {
-        $this->queryCommands['begin'] = 'INSERT INTO';
+        $this->queryBuilder->begin('INSERT INTO');
         return $this;
-    }
-
-    private function addQueryParam($value): string
-    {
-        $queryKey = '';
-        if (is_array($value)) {
-            $queryKey .= '(';
-            foreach ($value as $item) {
-                $key = "arg{$this->argCount}";
-                $queryKey .= ":{$key}, ";
-                $this->queryParams[$key] = $item;
-                $this->argCount++;
-            }
-            return rtrim($queryKey, ', ') . ')';
-        }
-        $queryKey .= "arg{$this->argCount}";
-        $this->queryParams[$queryKey] = $value;
-        $this->argCount++;
-        return ":" . $queryKey;
-    }
-
-    private function parseField(string $field): string
-    {
-        return str_replace(
-            [
-                ':tableName',
-                ':pkName'
-            ],
-            [
-                $this->tableName,
-                $this->pkName
-            ],
-            $field
-        );
     }
 
     public function getQueryInsert(): string
     {
-        $fields = '(';
-        $args = '(';
-        $schema = Schema::getFields($this->tableName, $this->connection->getDb());
-        foreach ($this->attributes as $attribute => $value) {
-            if (is_array($value)) {
-                $value = json_encode($value);
-            }
-            if (in_array($attribute, $schema, true)) {
-                $fields .= "`{$attribute}`, ";
-                $args .= "{$this->addQueryParam($value)}, ";
-            }
-        }
-        $fields = rtrim($fields, ", ") . ")";
-        $args = rtrim($args, ", ") . ")";
-        if ($args != "()") {
-            return "{$fields} VALUES{$args}";
-        }
-        return "";
+        return $this->queryBuilder->buildInsert(
+            $this->attributes,
+            Schema::getFields($this->tableName, $this->resolveConnection()->getDb())
+        );
     }
 
-    private function getQueryUpdate(): string
+    public function getQueryUpdate(): string
     {
-        $update = '';
-        if (isset($this->queryCommands['update'])) {
-            foreach ($this->queryCommands['update'] as $field => $value) {
-                if ((array_key_exists($field, $this->changes)
-                    || array_key_exists($field, $this->news))) {
-                    if (is_array($value)) {
-                        $value = json_encode($value);
-                    }
-                    $update .= "{$field}={$this->addQueryParam($value)}, ";
-                }
-            }
-        }
-        return rtrim($update, ', ');
-    }
-
-    private function getQuerySelect(): string
-    {
-        if (isset($this->queryCommands['select'])) {
-            foreach ($this->with as $with) {
-                foreach ($this->queryCommands['select'] as $key => $select) {
-                    if (str_starts_with($select, "{$with}.")) {
-                        $this->withSelects[$with][] = str_replace("{$with}.", "", $select);
-                        unset($this->queryCommands['select'][$key]);
-                    }
-                }
-            }
-            foreach ($this->queryCommands['select'] as &$select) {
-                $select = $this->tableName . "." . $select;
-            }
-            return rtrim(join(', ', $this->queryCommands['select']), ', ');
-        }
-        return '*';
+        return $this->queryBuilder->buildUpdate($this->getDirtyPersistedAttributes());
     }
 
     /**
      * @return string
      * @throws BaseException
      */
-    private function getQueryWhere(): string
+    public function getQuerySelect(): string
     {
-        $open = false;
-        $whereString = '';
-        if (isset($this->queryCommands['where'])) {
-            foreach ($this->queryCommands['where'] as $where) {
-                $cond = $where['cond'];
-                $field = array_keys($cond)[0];
-                $value = $cond[$field];
-                $conditionSymbol = '=';
-                if (!is_string($field) && !$where['in']) {
-                    $field = $cond[0];
-                    $conditionSymbol = $cond[1];
-                    $value = $cond[2];
-                }
-                if ($where['in']) {
-                    $conditionSymbol = ' IN ';
-                }
-                $field = $this->parseField($field);
-                switch ($where['command']) {
-                    case 'initial':
-                        $whereString .= "WHERE {$field}{$conditionSymbol}" . $this->addQueryParam($value);
-                        break;
-                    case 'AND':
-                        $whereString .= ($open ? ")" : "") .
-                            " AND ({$field}{$conditionSymbol}" . $this->addQueryParam($value);
-                        $open = true;
-                        break;
-                    case 'OR':
-                        $whereString .= " OR ({$field}{$conditionSymbol}" . $this->addQueryParam($value);
-                        break;
-                    default:
-                        throw new BaseException("No recognized WHERE command {$where['command']}");
-                }
+        $this->extractRelationSelects();
+        return $this->queryBuilder->buildSelect($this->tableName);
+    }
+
+    /**
+     * @throws BaseException
+     */
+    public function getQueryWhere(): string
+    {
+        return $this->queryBuilder->buildWhere($this->tableName, $this->pkName);
+    }
+
+    public function getQueryJoin(): string
+    {
+        return $this->queryBuilder->buildJoin($this->tableName, $this->pkName);
+    }
+
+    public function getQueryOrder(): string
+    {
+        return $this->queryBuilder->buildOrder();
+    }
+
+    public function getQueryAlias(): string
+    {
+        return $this->queryBuilder->getQueryAlias();
+    }
+
+    public function getQueryDistinct(): string
+    {
+        return $this->queryBuilder->getQueryDistinct();
+    }
+
+    protected function hasManyRelation(
+        string $relatedModelClass,
+        string $foreignKey,
+        ?string $localKey = null
+    ): RelationDefinition {
+        return new RelationDefinition(
+            RelationDefinition::TYPE_MANY,
+            $relatedModelClass,
+            $localKey ?? $this->pkName ?? 'id',
+            $foreignKey,
+            $this->runtimeConnection
+        );
+    }
+
+    protected function hasOneRelation(
+        string $relatedModelClass,
+        string $foreignKey,
+        ?string $localKey = null
+    ): RelationDefinition {
+        return new RelationDefinition(
+            RelationDefinition::TYPE_ONE,
+            $relatedModelClass,
+            $localKey ?? $this->pkName ?? 'id',
+            $foreignKey,
+            $this->runtimeConnection
+        );
+    }
+
+    public function getRawSql(): string
+    {
+        return $this->queryBuilder?->getRawSql() ?? '';
+    }
+
+    protected function createQueryBuilder(): QueryBuilder
+    {
+        return match ($this->resolveConnection()->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)) {
+            Connection::TYPE_MYSQL => new MysqlQueryBuilder(),
+            Connection::TYPE_SQLITE => new SqliteQueryBuilder(),
+            default => throw new UnsupportedDatabaseDriverException(
+                $this->resolveConnection()->getDb()->getAttribute(\PDO::ATTR_DRIVER_NAME)
+            ),
+        };
+    }
+
+    public function setRuntimeConnection(?Connection $connection = null): self
+    {
+        if ($connection !== null) {
+            $this->runtimeConnection = $connection;
+            $this->schemaFields = null;
+            if ($this->tableName !== null) {
+                $this->pkName = Schema::pkName($this->tableName, $connection->getDb());
             }
         }
-        return $open
-            ? $whereString . ')'
-            : $whereString;
+        return $this;
     }
 
-    private function getQueryJoin(): string
+    protected function getRuntimeConnection(): ?Connection
     {
-        $joinString = '';
-        if (isset($this->queryCommands['join'])) {
-            foreach ($this->queryCommands['join'] as $join) {
-                $joinString .= "{$join['type']} JOIN {$join['join'][0]} ON {$this->parseField($join['join'][1])}";
-            }
-        }
-        return $joinString;
+        return $this->runtimeConnection;
     }
 
-    private function getQueryOrder(): string
+    private function resolveConnection(?Connection $connection = null): Connection
     {
-        $orderBy = '';
-        if (isset($this->queryCommands['orderBy'])) {
-            $orderBy .= "ORDER BY {$this->queryCommands['orderBy'][0]} {$this->queryCommands['orderBy'][1]}";
-        }
-        return $orderBy;
-    }
-
-    private function getQueryAlias(): string
-    {
-        return isset($this->queryCommands['alias'])
-            ? " AS {$this->queryCommands['alias']}"
-            : "";
-    }
-
-    private function getQueryDistinct(): string
-    {
-        return $this->queryCommands['distinct'] ?? '';
+        return $connection ?? $this->runtimeConnection ?? Connection::getDefaultConnection();
     }
 
     private function allEmpty(): bool
     {
         return empty($this->attributes)
-            && empty($this->changes)
-            && empty($this->news);
+            && empty($this->oldAttributes);
+    }
+
+    private function extractRelationSelects(): void
+    {
+        $selects = $this->queryBuilder->getCommand('select');
+        if (!is_array($selects)) {
+            return;
+        }
+
+        foreach ($this->with as $with) {
+            foreach ($selects as $key => $select) {
+                if (str_starts_with($select, "{$with}.")) {
+                    $this->withSelects[$with][] = str_replace("{$with}.", "", $select);
+                    unset($selects[$key]);
+                }
+            }
+        }
+
+        $this->queryBuilder->setCommand('select', array_values($selects));
     }
 
     public function getAttributes(): array
     {
-        return $this->attributes;
+        return array_merge($this->attributes, $this->extraAttributes, $this->relations);
+    }
+
+    public function fields(): array
+    {
+        return [
+            ...$this->getSchemaFields(),
+            ...array_keys($this->relations),
+        ];
     }
 
     public function toArray(): array
     {
-        foreach ($this->needsToArray as $attr) {
-            $this->{$attr} = $this->{$attr}->toArray();
+        $serializationKey = spl_object_id($this);
+        if (isset(self::$serializationStack[$serializationKey])) {
+            return [];
         }
-        $attrs = $this->getAttributes();
-        if (!empty($this->hidden)) {
-            foreach ($this->hidden as $key) {
-                unset($attrs[$key]);
+
+        self::$serializationStack[$serializationKey] = true;
+        $attrs = [];
+
+        try {
+            foreach ($this->fields() as $key => $field) {
+                [$fieldName, $resolver] = $this->normalizeFieldDefinition($key, $field);
+                $attrs[$fieldName] = $this->normalizeArrayValue($this->resolveFieldValue($resolver));
             }
+        } finally {
+            unset(self::$serializationStack[$serializationKey]);
         }
+
         return $attrs;
     }
 
@@ -851,6 +834,272 @@ abstract class ActiveRecord extends BaseObject
     {
         $this->as_array = false;
         return $this;
+    }
+
+    public function getOldAttributes(): array
+    {
+        return $this->oldAttributes;
+    }
+
+    public function getChangedAttributes(): array
+    {
+        return $this->getDirtyPersistedAttributes();
+    }
+
+    public function getRelations(): array
+    {
+        return $this->relations;
+    }
+
+    public function isDirty(): bool
+    {
+        return $this->hasDirtyPersistedAttributes();
+    }
+
+    private function setRelationValue(string $name, mixed $value): void
+    {
+        $this->relations[$name] = $value;
+        unset($this->extraAttributes[$name]);
+    }
+
+    private function resolveRelation(string $name): mixed
+    {
+        $call = $this->{$name}();
+
+        if ($call instanceof RelationDefinition) {
+            $relation = $this->materializeDefinedRelation($call, $name);
+            $this->setRelationValue($name, $relation);
+            return $relation;
+        }
+
+        if ($call instanceof ActiveRecord) {
+            $call->setRuntimeConnection($this->runtimeConnection);
+            $all = $call->all();
+            $relation = ($call->isHasOne() && count($all) > 0) ? $all[0] : $all;
+            $this->setRelationValue($name, $relation);
+            return $relation;
+        }
+
+        if ($call instanceof Collection) {
+            $this->setRelationValue($name, $call);
+            return $call;
+        }
+
+        return null;
+    }
+
+    private function isRelationMethod(string $name): bool
+    {
+        if (!method_exists($this, $name)) {
+            return false;
+        }
+
+        $method = new \ReflectionMethod($this, $name);
+        if (!$method->isPublic() || $method->isStatic() || $method->getNumberOfRequiredParameters() > 0) {
+            return false;
+        }
+
+        return !in_array($method->getDeclaringClass()->getName(), [self::class, BaseObject::class], true);
+    }
+
+    private function isRelationValue(mixed $value): bool
+    {
+        return $value instanceof ActiveRecord
+            || $value instanceof Collection
+            || is_array($value)
+            || $value === null;
+    }
+
+    private function hasDirtyPersistedAttributes(): bool
+    {
+        if ($this->isNewRecord()) {
+            return !empty($this->attributes);
+        }
+
+        return !empty($this->getDirtyPersistedAttributes());
+    }
+
+    private function syncPersistedState(): void
+    {
+        $this->oldAttributes = [];
+
+        foreach ($this->attributes as $name => $value) {
+            if ($this->isSchemaField($name)) {
+                $this->oldAttributes[$name] = $value;
+            }
+        }
+    }
+
+    private function getSchemaFields(): array
+    {
+        if ($this->tableName === null) {
+            return [];
+        }
+
+        if ($this->schemaFields === null) {
+            $this->schemaFields = Schema::getFields($this->tableName, $this->resolveConnection()->getDb()) ?? [];
+        }
+
+        return $this->schemaFields;
+    }
+
+    private function isSchemaField(string $name): bool
+    {
+        return in_array($name, $this->getSchemaFields(), true);
+    }
+
+    private function normalizeArrayValue(mixed $value): mixed
+    {
+        if ($value instanceof ActiveRecord) {
+            if (isset(self::$serializationStack[spl_object_id($value)])) {
+                return null;
+            }
+            return $value->toArray();
+        }
+
+        if ($value instanceof Collection) {
+            return $value->toArray();
+        }
+
+        return $value;
+    }
+
+    private function normalizeFieldDefinition(int|string $key, mixed $field): array
+    {
+        if (is_int($key)) {
+            if (!is_string($field)) {
+                throw new BaseException('Numeric fields() entries must contain a string field name');
+            }
+
+            return [$field, $field];
+        }
+
+        if (is_callable($field)) {
+            return [$key, $field];
+        }
+
+        if (!is_string($field)) {
+            throw new BaseException("Field '{$key}' must resolve from a string name or callable");
+        }
+
+        return [$key, $field];
+    }
+
+    private function resolveFieldValue(string|callable $resolver): mixed
+    {
+        if (is_callable($resolver)) {
+            return $resolver($this);
+        }
+
+        if (array_key_exists($resolver, $this->attributes)) {
+            return $this->attributes[$resolver];
+        }
+
+        if (array_key_exists($resolver, $this->relations)) {
+            return $this->relations[$resolver];
+        }
+
+        return null;
+    }
+
+    private function isNewRecord(): bool
+    {
+        return !empty($this->attributes) && empty($this->oldAttributes);
+    }
+
+    private function resolveBuildPayload(): array
+    {
+        return match ($this->queryBuilder->getCommand('begin')) {
+            'INSERT INTO' => $this->attributes,
+            'UPDATE' => $this->getDirtyPersistedAttributes(),
+            default => [],
+        };
+    }
+
+    private function eagerLoadRelation(
+        array $objects,
+        string $relationName,
+        RelationDefinition $definition,
+        ?Connection $connection = null
+    ): void {
+        if (isset($this->withSelects[$relationName])) {
+            $definition->select($this->withSelects[$relationName]);
+        }
+
+        $definition->applyRuntimeConnection($connection ?? $this->runtimeConnection);
+        $localKey = $definition->getLocalKey();
+        $keys = [];
+
+        foreach ($objects as $object) {
+            $value = $object->{$localKey};
+            if ($value !== null && $value !== '') {
+                $keys[] = $value;
+            }
+        }
+
+        $keys = array_values(array_unique($keys, SORT_REGULAR));
+        if (empty($keys)) {
+            foreach ($objects as $object) {
+                $object->setRelationValue(
+                    $relationName,
+                    $definition->isHasOne() ? null : Collection::factory()
+                );
+            }
+            return;
+        }
+
+        $related = $definition->createQuery($keys, $connection ?? $this->runtimeConnection)
+            ->all($connection ?? $this->runtimeConnection);
+        $grouped = [];
+
+        foreach ($related ?? [] as $item) {
+            $grouped[$item->{$definition->getForeignKey()}][] = $item;
+        }
+
+        foreach ($objects as $object) {
+            $value = $object->{$localKey};
+            $items = $grouped[$value] ?? [];
+            $object->setRelationValue(
+                $relationName,
+                $definition->isHasOne() ? ($items[0] ?? null) : Collection::factory($items)
+            );
+        }
+    }
+
+    private function materializeDefinedRelation(RelationDefinition $definition, string $relationName): mixed
+    {
+        if (isset($this->withSelects[$relationName])) {
+            $definition->select($this->withSelects[$relationName]);
+        }
+
+        $definition->applyRuntimeConnection($this->runtimeConnection);
+        $localValue = $this->{$definition->getLocalKey()};
+        if ($localValue === null || $localValue === '') {
+            return $definition->isHasOne() ? null : Collection::factory();
+        }
+
+        $all = $definition->createQuery([$localValue], $this->runtimeConnection)->all($this->runtimeConnection);
+
+        return $definition->isHasOne()
+            ? (($all instanceof Collection && count($all) > 0) ? $all[0] : null)
+            : $all;
+    }
+
+    private function getDirtyPersistedAttributes(): array
+    {
+        $dirty = [];
+
+        foreach ($this->attributes as $name => $value) {
+            if (!$this->isSchemaField($name)) {
+                continue;
+            }
+
+            if (!array_key_exists($name, $this->oldAttributes) || $this->oldAttributes[$name] !== $value) {
+                $dirty[$name] = $value;
+            }
+        }
+
+        return $dirty;
     }
 
 }

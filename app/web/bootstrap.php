@@ -3,7 +3,6 @@
 use Adige\core\Adige;
 use Adige\core\http\http\WebResponse;
 use Adige\core\database\Connection;
-use Adige\core\BaseEnvironment;
 
 return [
     Adige::ROUTER_HANDLER => [
@@ -24,5 +23,9 @@ return [
             'database' => env('DB_DATABASE', 'adige'),
             'port' => '3306',
         ],
+    ],
+    Adige::SCHEMA_CONFIG => [
+        'cache' => 'file',
+        'path' => APP_ROOT . 'schema.json',
     ]
 ];

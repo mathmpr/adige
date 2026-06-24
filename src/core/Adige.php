@@ -15,6 +15,7 @@ class Adige extends BaseObject
     const CACHE_HANDLER = 'cache';
     const ROUTER_HANDLER = 'router';
     const DB_HANDLER = 'db';
+    const SCHEMA_CONFIG = 'schema';
 
     const HANDLERS = [
         self::REQUEST_HANDLER,

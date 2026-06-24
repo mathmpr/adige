@@ -2,17 +2,25 @@
 
 namespace Adige\core\database;
 
+use Adige\core\BaseObject;
+use Adige\core\database\dialects\mysql\DsnBuilder as MysqlDsnBuilder;
+use Adige\core\database\dialects\sqlite\DsnBuilder as SqliteDsnBuilder;
 use Adige\core\database\exceptions\CantConnectException;
+use Adige\core\database\exceptions\ConnectionNameAlreadyExistsException;
 use Adige\core\database\exceptions\DefaultConnectionNotDefinedException;
+use Adige\core\database\exceptions\UnsupportedConnectionTypeException;
 use PDO;
 use PDOException;
 use PDOStatement;
-use Adige\core\BaseObject;
-use Adige\core\BaseException;
 
 class Connection extends BaseObject
 {
     public static array $connections = [];
+
+    public const TYPE_MYSQL = 'mysql';
+    public const TYPE_SQLITE = 'sqlite';
+    private const TRANSACTION_CALLER_INTERNAL = 'internal';
+    private const TRANSACTION_CALLER_EXTERNAL = 'external';
 
     private ?PDO $db = null;
 
@@ -20,9 +28,13 @@ class Connection extends BaseObject
 
     private bool $connected = false;
 
-    private array $exceptions = [];
+    private ?string $transactionCaller = null;
 
     private ?string $host;
+
+    private string $name = '';
+
+    private string $type = self::TYPE_MYSQL;
 
     private ?string $user;
 
@@ -35,6 +47,8 @@ class Connection extends BaseObject
     private ?string $charset;
 
     private bool $default = false;
+
+    private bool $requestedDefault = true;
 
 
     const AUTO_COMMIT = 'autoCommit';
@@ -51,6 +65,10 @@ class Connection extends BaseObject
      * @param string $database
      * @param string $port
      * @param string $charset
+     * @param string $type
+     * @param string $name
+     * @param bool $isDefault
+     * @param bool $autoCommit
      */
     public function __construct(
         string $host = '',
@@ -58,7 +76,11 @@ class Connection extends BaseObject
         string $password = '',
         string $database = '',
         string $port = '3306',
-        string $charset = 'utf8mb4'
+        string $charset = 'utf8mb4',
+        string $type = self::TYPE_MYSQL,
+        string $name = '',
+        bool $isDefault = true,
+        bool $autoCommit = false
     ) {
         $this->host = $host;
         $this->user = $user;
@@ -66,6 +88,10 @@ class Connection extends BaseObject
         $this->database = $database;
         $this->port = $port;
         $this->charset = $charset;
+        $this->type = $type;
+        $this->name = $name !== '' ? $name : $host;
+        $this->requestedDefault = $isDefault;
+        $this->options[self::AUTO_COMMIT] = $autoCommit;
         $this->connect();
         parent::__construct();
     }
@@ -73,16 +99,17 @@ class Connection extends BaseObject
     /**
      * @return void
      * @throws CantConnectException
+     * @throws ConnectionNameAlreadyExistsException
      */
     public function connect(): void
     {
         if (!$this->connected) {
+            $isFirstConnection = empty(self::$connections);
+            $this->assertNameIsAvailable();
+
             try {
                 $this->db = new PDO(
-                    "mysql:host=" . $this->host .
-                    ";port=" . $this->port .
-                    (!empty($this->database) ? ";dbname=" . $this->database : "") .
-                    ";charset=" . $this->charset,
+                    $this->createDsnBuilder()->build($this),
                     $this->user,
                     $this->password,
                     [
@@ -91,18 +118,15 @@ class Connection extends BaseObject
                     ]
                 );
                 $this->connected = true;
-                $this->setIsDefault(true);
-                self::$connections[$this->host] = $this;
+                self::$connections[$this->name] = $this;
+
+                if ($isFirstConnection && $this->requestedDefault) {
+                    $this->makeDefault();
+                }
             } catch (PDOException $exception) {
-                $this->handleException($exception);
                 throw new CantConnectException($this->host, $this->user, $this->password, $this->database, $this->charset, $exception);
             }
         }
-    }
-
-    public function setIsDefault(bool $default): void
-    {
-        $this->default = $default;
     }
 
     public function isDefault(): bool
@@ -110,36 +134,22 @@ class Connection extends BaseObject
         return $this->default;
     }
 
+    public function makeDefault(): self
+    {
+        foreach (self::$connections as $connection) {
+            $connection->default = false;
+        }
+
+        $this->default = true;
+
+        return $this;
+    }
+
     public function setOptions(array $options): void
     {
         foreach ($options as $option => $value) {
             $this->setOption($option, $value);
         }
-    }
-
-    /**
-     * @param PDOException|BaseException $exception
-     * @return void
-     */
-    private function handleException(PDOException|BaseException $exception): void
-    {
-        $arrayException = [
-            'message' => $exception->getMessage(),
-            'code' => $exception->getCode(),
-        ];
-
-        $trace = array_values(array_filter($exception->getTrace(), function ($trace) {
-            if(!isset($trace['file'])) {
-                return false;
-            }
-            return $trace['file'] !== __FILE__;
-        }));
-
-        $arrayException['line'] = $trace[0]['line'] ?? 'unknown';
-        $arrayException['file'] = $trace[0]['file'] ?? 'unknown';
-        $arrayException['trace'] = $trace;
-
-        $this->exceptions[] = $arrayException;
     }
 
     public function getOption($name = ''): array
@@ -157,87 +167,107 @@ class Connection extends BaseObject
         }
     }
 
-    public function getLastException()
-    {
-        return end($this->exceptions);
-    }
-
     /**
-     * @return void
      * @throws CantConnectException
      */
-    public function beginTransaction(): void
+    public function beginTransaction(): self
     {
-        $this->connect();
-        if (!$this->inTransaction) {
-            $this->inTransaction = true;
-            $this->db->beginTransaction();
-        }
+        return $this->beginTransactionFor(self::TRANSACTION_CALLER_EXTERNAL);
     }
 
-    public function commitTransaction(): void
+    public function commitTransaction(): self
     {
         if ($this->inTransaction) {
-            $this->inTransaction = false;
             $this->db->commit();
+            $this->inTransaction = false;
+            $this->transactionCaller = null;
         }
+
+        return $this;
     }
 
     private function autoCommit(): void
     {
-        if ($this->options[Connection::AUTO_COMMIT] === true) {
+        if (
+            $this->options[self::AUTO_COMMIT] === true
+            && $this->transactionCaller === self::TRANSACTION_CALLER_INTERNAL
+        ) {
             $this->commitTransaction();
         }
     }
 
-    public function rollBackTransaction(): void
+    public function rollBackTransaction(): self
     {
         if ($this->inTransaction) {
-            $this->inTransaction = false;
             $this->db->rollBack();
+            $this->inTransaction = false;
+            $this->transactionCaller = null;
         }
+
+        return $this;
     }
 
-    public function query($query = '', $args = []): ?PDOStatement
+    public function query($query = '', $args = []): PDOStatement
     {
         return $this->common($query, $args);
     }
 
-    public function select(string $query, ?array $args = []): ?array
+    public function select(string $query, ?array $args = []): array
     {
-        if ($stmt = $this->common($query, $args)) {
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        }
-        return [];
+        return $this->common($query, $args)->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    public function insert(string $query, ?array $args = []): int
+    public function insert(string $query, ?array $args = []): string|int
     {
-        if ($this->common($query, $args)) {
-            return $this->db->lastInsertId();
-        }
-        return 0;
+        $this->common($query, $args);
+        return $this->db->lastInsertId();
     }
 
-    public function update(string $query, ?array $args = []): bool
+    public function update(string $query, ?array $args = []): int
     {
-        return !empty($this->common($query, $args));
+        return $this->common($query, $args)->rowCount();
     }
 
-    private function common(string $query, ?array $args = []): ?PDOStatement
+    public function delete(string $query, ?array $args = []): int
     {
-        $this->beginTransaction();
-        try {
-            $stmt = $this->db->prepare($query);
-            if ($stmt && $stmt->execute($args)) {
-                $this->autoCommit();
-                return $stmt;
-            }
-        } catch (PDOException $exception) {
-            $this->handleException($exception);
-            $this->rollBackTransaction();
+        return $this->common($query, $args)->rowCount();
+    }
+
+    private function common(string $query, ?array $args = []): PDOStatement
+    {
+        $this->beginTransactionFor(self::TRANSACTION_CALLER_INTERNAL);
+        $stmt = $this->db->prepare($query);
+        if (!$stmt) {
+            throw new PDOException('Failed to prepare query.');
         }
-        return null;
+
+        $stmt->execute($args);
+        $this->autoCommit();
+
+        return $stmt;
+    }
+
+    /**
+     * @throws CantConnectException
+     */
+    private function beginTransactionFor(string $caller): self
+    {
+        $this->connect();
+
+        if ($caller === self::TRANSACTION_CALLER_EXTERNAL) {
+            $this->transactionCaller = self::TRANSACTION_CALLER_EXTERNAL;
+        }
+
+        if ($this->inTransaction) {
+            return $this;
+        }
+
+        if ($this->db->beginTransaction()) {
+            $this->inTransaction = true;
+            $this->transactionCaller = $caller;
+        }
+
+        return $this;
     }
 
     /**
@@ -263,6 +293,65 @@ class Connection extends BaseObject
     {
         $this->db = $db;
         return $this;
+    }
+
+    public function getHost(): ?string
+    {
+        return $this->host;
+    }
+
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    public function getType(): string
+    {
+        return $this->type;
+    }
+
+    public function getUser(): ?string
+    {
+        return $this->user;
+    }
+
+    public function getPassword(): ?string
+    {
+        return $this->password;
+    }
+
+    public function getDatabase(): ?string
+    {
+        return $this->database;
+    }
+
+    public function getPort(): ?string
+    {
+        return $this->port;
+    }
+
+    public function getCharset(): ?string
+    {
+        return $this->charset;
+    }
+
+    protected function createDsnBuilder(): DsnBuilder
+    {
+        return match ($this->type) {
+            self::TYPE_MYSQL => new MysqlDsnBuilder(),
+            self::TYPE_SQLITE => new SqliteDsnBuilder(),
+            default => throw new UnsupportedConnectionTypeException($this->type),
+        };
+    }
+
+    /**
+     * @throws ConnectionNameAlreadyExistsException
+     */
+    private function assertNameIsAvailable(): void
+    {
+        if (isset(self::$connections[$this->name])) {
+            throw new ConnectionNameAlreadyExistsException($this->name);
+        }
     }
 
 }

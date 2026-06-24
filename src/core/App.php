@@ -6,6 +6,7 @@ use Adige\console\ConsoleResponse;
 use Adige\console\ConsoleRequest;
 use Adige\core\collection\Collection;
 use Adige\core\database\ActiveRecord;
+use Adige\core\database\Schema;
 use Adige\core\file\File;
 use Adige\core\http\http\FileResponse;
 use Adige\core\http\http\JsonResponse;
@@ -26,9 +27,11 @@ class App extends BaseObject
 
     public function init(): void
     {
+        $bootstrap = $this->bootstrap();
+        $this->applyBootstrapConfiguration($bootstrap);
         $this->definitions = deep_merge(
             $this->defaultHandlers(),
-            $this->bootstrap()
+            $bootstrap
         );
         $this->initializeInstantHandlers();
         parent::init();
@@ -97,6 +100,14 @@ class App extends BaseObject
             }
         }
         return $bootstrap;
+    }
+
+    protected function applyBootstrapConfiguration(array &$bootstrap): void
+    {
+        if (isset($bootstrap['schema']) && is_array($bootstrap['schema'])) {
+            Schema::configure($bootstrap['schema']);
+            unset($bootstrap['schema']);
+        }
     }
 
     protected function make(mixed $definition): mixed
