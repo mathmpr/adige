@@ -2,6 +2,7 @@
 
 namespace Adige\core;
 
+use Adige\console\CommandCatalog;
 use Adige\core\http\http\WebRequest;
 use Adige\core\http\http\WebResponse;
 use Adige\core\http\http\exceptions\MethodNotAllowed;
@@ -103,7 +104,7 @@ class ExceptionHandler extends BaseObject
             return sprintf(
                 "Error: %s\n",
                 $this->resolveUserFacingMessage($throwable)
-            );
+            ) . $this->buildConsoleSuggestions($throwable);
         }
 
         return sprintf(
@@ -112,7 +113,7 @@ class ExceptionHandler extends BaseObject
             $throwable->getFile(),
             $throwable->getLine(),
             $throwable->getTraceAsString()
-        );
+        ) . $this->buildConsoleSuggestions($throwable);
     }
 
     public function buildErrorPayload(Throwable $throwable): array
@@ -236,5 +237,28 @@ HTML;
             $throwable->getFile(),
             $throwable->getLine()
         ));
+    }
+
+    protected function buildConsoleSuggestions(Throwable $throwable): string
+    {
+        if (!$throwable instanceof RouteNotFound) {
+            return '';
+        }
+
+        $router = Adige::$app?->router;
+        $request = Adige::$app?->request;
+        $namespaces = $router?->getControllerNamespaces() ?? [];
+        $input = $request?->getUri();
+
+        if (empty($namespaces) || !is_string($input) || trim($input) === '') {
+            return '';
+        }
+
+        $suggestions = (new CommandCatalog($namespaces))->suggest($input);
+        if (empty($suggestions)) {
+            return '';
+        }
+
+        return "\nDid you mean:\n- " . implode("\n- ", $suggestions) . "\n";
     }
 }
