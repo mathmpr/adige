@@ -1,37 +1,37 @@
-# Adige Public API 0.0.1
+# Adige Public API
 
-Este documento define o contrato público pretendido para a estabilização `0.0.1`.
+Este documento consolida a baseline pública do Adige após:
+- `0.0.1` estabilização do core
+- `0.0.2` estabilização do ORM
+- `0.0.3` cleanup do console legado
 
 Objetivo:
 - deixar explícito o que aplicações podem usar com expectativa razoável de compatibilidade
 - separar API pública de detalhe interno
-- registrar comportamentos conhecidos que ainda não são considerados “fechados”
+- consolidar o contrato estável do microframework em um único ponto
 
-## Versão alvo
+## Posicionamento atual
 
-- estabilização alvo: `0.0.1`
-
-## Posicionamento de uso
-
-Na linha `0.0.1`, o Adige já pode ser tratado como um microframework estabilizado.
+No estado atual, o Adige pode ser tratado como um microframework pequeno com:
+- core HTTP/kernel/router estabilizado
+- ORM estabilizado no recorte `ActiveRecord` / `Connection` / `Schema`
+- fluxo de console consolidado sobre controller/route convencionais
 
 Uso recomendado:
-- projetos pequenos
-- ferramentas internas
 - APIs simples
-- cenários controlados em produção
+- ferramentas internas
+- aplicações pequenas ou controladas
+- cenários onde previsibilidade e baixo acoplamento importam mais do que grande escopo de features
 
-Ressalvas:
-- não é o objetivo desta versão competir em escopo com frameworks grandes e amplamente consolidados
-- a camada HTTP/kernel/router está mais madura do que a camada ORM
+## Decisão arquitetural consolidada
 
-## Decisão arquitetural
+- `Adige` é o entrypoint central do ciclo de execução
+- `App` é o configurador/container responsável por handlers, bootstrap e normalização de response
+- `Router` resolve rotas explícitas e autodiscovery por convenção
+- controllers retornam resultados simples e `App` normaliza isso para `BaseResponse`
+- o console usa o mesmo modelo de controller/action do fluxo web
 
-- `Adige` permanece como ponto central do ciclo de execução
-- `Adige` faz o papel de kernel do framework, mantendo esse nome
-- `App` é o container/configurador responsável por handlers, bootstrap e normalização de response
-
-## API pública
+## API pública do core
 
 ### `Adige::run()`
 
@@ -52,9 +52,10 @@ use app\core\Adige;
 Adige::run();
 ```
 
-Garantias de `0.0.1`:
+Garantias:
 - `Adige::run()` continua sendo o entrypoint principal
-- o ciclo de execução passa por request, router, action e response
+- o ciclo passa por request, router, action e response
+- o transporte final é normalizado por `App`
 
 ### `Route::*()`
 
@@ -77,33 +78,32 @@ Contrato:
 - aceitam `callable` ou controller/action
 - `group()` aplica prefixo e middleware de grupo
 
-Garantias de `0.0.1`:
-- rota explícita tem precedência sobre autodiscover
+Garantias:
+- rota explícita tem precedência sobre autodiscovery
 - entre rotas explícitas compatíveis, segmentos estáticos têm precedência sobre dinâmicos
-- `ALL` casa com qualquer método HTTP
+- `ALL` casa com qualquer método
 
-### `Controller`
+### Controllers
 
 Arquivo base:
 - [src/core/controller/BaseController.php](/home/mathmpr/PhpstormProjects/adige/src/core/controller/BaseController.php)
 
 Contrato:
-- controllers podem implementar `action*`
+- controllers expõem actions `action*`
 - `beforeAction()` e `afterAction()` participam do ciclo
-- `respond()` cria `BaseResponse` coerente com o transporte atual
+- actions podem retornar:
+  - `BaseResponse`
+  - `string`
+  - `array`
+  - `object`
+  - `null`
 
-Retornos aceitos de actions em `0.0.1`:
-- `BaseResponse`
-- `string`
-- `array`
-- `object`
-- `null`
+Garantias:
+- o retorno da action é sempre normalizado para `BaseResponse`
+- route params têm precedência na injeção de parâmetros da action
+- o mesmo modelo de action/retorno vale para web e console
 
-Observação:
-- actions web e console compartilham o mesmo modelo de retorno flexível
-- a normalização final para `BaseResponse` é responsabilidade de `App`
-
-### `Request`
+### Request
 
 Arquivos:
 - [src/core/BaseRequest.php](/home/mathmpr/PhpstormProjects/adige/src/core/BaseRequest.php)
@@ -111,16 +111,16 @@ Arquivos:
 - [src/console/ConsoleRequest.php](/home/mathmpr/PhpstormProjects/adige/src/console/ConsoleRequest.php)
 
 Contrato:
-- `BaseRequest` expõe `getUri()`, `getUriParts()`, `getMethod()`, `input()`
-- `WebRequest` expõe query, post, raw body, files e headers
+- `BaseRequest` expõe o contrato comum de URI, método e input
+- `WebRequest` expõe query params, post body, raw body, files e headers
 - `ConsoleRequest` expõe argumentos/opções CLI integrados ao `input()`
 
-Garantias de `0.0.1`:
-- route params têm precedência absoluta na injeção de parâmetros de action
-- `WebRequest::acceptsJson()` respeita `Accept` de forma case-insensitive
+Garantias:
+- `WebRequest::acceptsJson()` respeita o header `Accept`
 - `fixUri()` não depende mais do path físico do projeto
+- opções do console são integradas ao ciclo de resolução de actions
 
-### `Response`
+### Response
 
 Arquivos:
 - [src/core/BaseResponse.php](/home/mathmpr/PhpstormProjects/adige/src/core/BaseResponse.php)
@@ -137,64 +137,166 @@ Contrato:
 - `WebResponse` lida com status, headers e body
 - `ConsoleResponse` lida com `stdout`, `stderr` e `exitCode`
 
-Garantias de `0.0.1`:
+Garantias:
 - `redirect()` retorna `self`
-- `Content-Type` é resolvido de forma previsível
-- headers são emitidos em ordem determinística
-- `JsonResponse` respeita `Content-Type` explícito quando fornecido
+- headers e status code são manipulados de forma previsível
+- `null` em console vira `ConsoleResponse` com exit code `0`
+- `null` em web vira resposta vazia ou usa o buffer produzido
+
+### Router e autodiscovery
+
+Arquivos:
+- [src/core/routing/Router.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/Router.php)
+- [src/core/routing/BaseRoute.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php)
+
+Contrato externo:
+- o framework suporta rotas explícitas e autodiscovery por convenção
+- autodiscovery resolve controller/action por namespaces configurados
+- o default route/controller/action continua parte do comportamento suportado
+
+Garantias:
+- a geração de candidatos do autodiscovery é determinística
+- console e web usam o mesmo núcleo de resolução
+- falhas de rota geram exceções semânticas claras
+
+### Tratamento de erros
+
+Arquivo:
+- [src/core/ExceptionHandler.php](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
+
+Contrato:
+- exceções do ciclo principal são tratadas centralmente
+- erros são mapeados para respostas HTTP ou saída de console coerentes com o transporte
+
+Garantias:
+- `RouteNotFound` mapeia para `404`
+- `MethodNotAllowed` mapeia para `405`
+- `NotImplemented` mapeia para `501`
+- ambiente de produção usa mensagem genérica para falhas internas
+
+## API pública do ORM
+
+### `Connection`
+
+Arquivo:
+- [src/core/database/Connection.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/Connection.php)
+
+Contrato:
+- representa uma conexão nomeada com seleção explícita de driver
+- suporta MySQL e SQLite sem fallback silencioso
+
+Comportamentos públicos estabilizados:
+- `getDefaultConnection()` retorna a conexão default ou falha explicitamente
+- conexões duplicadas por nome falham explicitamente
+- `query()` retorna `PDOStatement`
+- `select()` retorna `array`
+- `insert()` retorna `lastInsertId()`
+- `update()` retorna linhas afetadas
+- `delete()` retorna linhas afetadas
+
+Política estabilizada:
+- a primeira conexão pode virar default explicitamente
+- conexões posteriores não roubam o status de default implicitamente
+- erros de conexão são encapsulados por `CantConnectException`
+- erros de query sobem como `PDOException`
+
+### `Schema`
+
+Arquivo:
+- [src/core/database/Schema.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/Schema.php)
+
+Contrato:
+- leitura de schema é explícita e baseada no driver real da conexão
+- cache de schema é configurável
+
+Comportamentos públicos estabilizados:
+- `getSchema()`
+- `pkName()`
+- `getFields()`
+- `useMemoryCache()`
+- `useFileCache()`
+- `useCacheStore()`
+- `clearCache()`
+- `refreshSchema()`
+- `refreshAll()`
+- `saveCache()`
+
+Garantias:
+- leitura normal não grava `schema.json` implicitamente
+- cache ausente não é tratado como erro
+- atualização de cache depende de fluxo explícito
 
 ### `ActiveRecord`
 
-Arquivo base:
+Arquivo:
 - [src/core/database/ActiveRecord.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/ActiveRecord.php)
 
-Status em `0.0.1`:
-- faz parte da superfície pública existente
-- mas não é foco principal desta estabilização
+Contrato:
+- o modelo principal do ORM continua sendo `ActiveRecord`
+- conexões explícitas podem ser passadas ao fluxo de consulta e persistência
 
-Garantias limitadas:
-- o core HTTP/router/response é prioridade de compatibilidade
-- a camada ORM ainda pode sofrer ajustes mais frequentes do que o núcleo HTTP
+Comportamentos públicos estabilizados:
+- a conexão de runtime flui por `one()`, `all()`, `build()`, `execute()`, `save()` e `remove()`
+- models hidratados preservam a conexão usada na consulta principal
+- relações reutilizam a mesma conexão em eager e lazy loading
+- `where()` usa grupos lógicos recursivos e operadores explícitos
+- eager loading suporta caminhos aninhados por dot notation
 
-## Detalhes internos
+## Console consolidado
+
+Arquivos:
+- [src/console/ConsoleRequest.php](/home/mathmpr/PhpstormProjects/adige/src/console/ConsoleRequest.php)
+- [src/console/controllers/BaseController.php](/home/mathmpr/PhpstormProjects/adige/src/console/controllers/BaseController.php)
+- [src/console/CommandCatalog.php](/home/mathmpr/PhpstormProjects/adige/src/console/CommandCatalog.php)
+
+Contrato consolidado:
+- comandos de console não são mais registrados por um registry CLI separado
+- comandos são executados via controller/action convencionais
+- help e sugestões de comando derivam do mesmo contrato de autodiscovery do router
+
+Garantias:
+- o console não mantém mais um segundo sistema de comandos legado
+- sugestões de comandos aceitam `server/start` e `server:start` para matching
+- o comportamento equivalente ao antigo `didYouSay()` foi preservado no fluxo atual
+
+## Itens internos
 
 Os itens abaixo não devem ser tratados como contrato estável de aplicação:
 
 - [src/core/App.php](/home/mathmpr/PhpstormProjects/adige/src/core/App.php)
-  - formato interno de definitions/handlers
+  - formato interno de `definitions` e `handlers`
   - resolução lazy e `instant => true`
-- [src/core/ExceptionHandler.php](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
-  - detalhes de payload HTML/JSON
-  - formatação textual de erro
-- [src/core/routing/Router.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/Router.php)
-  - helpers internos de matching/specificity
-- [src/core/routing/BaseRoute.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php)
-  - detalhes de reflexão e injeção interna
-- `helpers` globais em [src/helpers/functions.php](/home/mathmpr/PhpstormProjects/adige/src/helpers/functions.php)
-  - permanecem utilizáveis, mas sua estrutura interna não deve ser tomada como API estável além do comportamento já coberto em testes
+- detalhes internos de reflexão e binding em [src/core/routing/BaseRoute.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php)
+- formatação textual/HTML/JSON exata do [src/core/ExceptionHandler.php](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
+- dialetos internos e builders do ORM:
+  - `DsnBuilder`
+  - `QueryBuilder`
+  - implementações específicas em `dialects/*`
+- helpers globais em [src/helpers/functions.php](/home/mathmpr/PhpstormProjects/adige/src/helpers/functions.php)
+  - podem ser usados, mas sua organização interna não deve ser tratada como contrato fechado
 
-## Comportamentos conhecidos e limites atuais
+## Limites e resíduos conhecidos
 
-Itens conhecidos em `0.0.1`:
+Itens ainda presentes, mas que não invalidam a baseline estabilizada:
 
-1. `Adige::$app` ainda é ponto global forte.
-2. O autodiscover continua no núcleo e aumenta o acoplamento do router com convenções de aplicação.
-3. A precedência do autodiscover está documentada, mas a decisão de mantê-lo no núcleo ainda pode ser revista depois de `0.0.1`.
-4. A cobertura de `WebRequest` ainda é menor do que a de router/response.
-5. `ActiveRecord` ainda não recebeu o mesmo nível de estabilização formal do núcleo HTTP.
-6. O playground da aplicação (`app/`, entrypoints e exemplos) ainda convive no mesmo repositório do core, então a separação entre pacote distribuível e app de desenvolvimento ainda não está completamente limpa.
+1. `Adige::$app` ainda existe como ponto global relevante.
+2. O autodiscovery continua no núcleo do router e mantém acoplamento com convenções de aplicação.
+3. O repositório ainda mistura framework e playground de aplicação em partes do layout.
+4. O contrato público está estabilizado no recorte atual, mas isso não implica grande escopo de features.
 
 ## Compatibilidade esperada
 
-Durante a linha `0.0.1`, a intenção é preservar:
+A intenção é preservar:
 - `Adige::run()`
 - `Route::*()`
 - contrato de retorno das actions
 - contrato básico de `Request` e `Response`
-- comportamento documentado do roteador
+- comportamento documentado de routing/autodiscovery
+- baseline pública de `ActiveRecord`, `Connection` e `Schema`
+- fluxo atual de console baseado em controller/action
 
-Mudanças ainda mais livres:
+Continuam mais livres para evolução:
 - detalhes internos de `App`
-- implementação do `ExceptionHandler`
-- refinamentos da camada ORM
-- organização do playground de desenvolvimento
+- implementação interna do `ExceptionHandler`
+- estrutura dos dialetos do ORM
+- organização do playground da aplicação
