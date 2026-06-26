@@ -120,6 +120,17 @@ Garantias:
 - `fixUri()` não depende mais do path físico do projeto
 - opções do console são integradas ao ciclo de resolução de actions
 
+Eventos públicos de lifecycle:
+- `BaseRequest::EVENT_BEFORE_INIT`
+- `BaseRequest::EVENT_AFTER_INIT`
+- `BaseRequest::EVENT_BEFORE_FIX_URI`
+- `BaseRequest::EVENT_AFTER_FIX_URI`
+
+Uso esperado:
+- listeners podem ser registrados por instância com `on()`
+- listeners globais podem ser registrados por classe base via [`src/core/events/Event.php`](/home/mathmpr/PhpstormProjects/adige/src/core/events/Event.php)
+- listeners globais registrados em `BaseRequest::class` alcançam subclasses como `WebRequest` e `ConsoleRequest`
+
 ### Response
 
 Arquivos:
@@ -142,6 +153,13 @@ Garantias:
 - headers e status code são manipulados de forma previsível
 - `null` em console vira `ConsoleResponse` com exit code `0`
 - `null` em web vira resposta vazia ou usa o buffer produzido
+
+Eventos públicos de lifecycle:
+- `BaseResponse::EVENT_BEFORE_DISPATCH`
+- `BaseResponse::EVENT_AFTER_DISPATCH`
+
+Uso esperado:
+- listeners globais registrados em `BaseResponse::class` alcançam `WebResponse`, `ConsoleResponse` e subclasses
 
 ### Router e autodiscovery
 
@@ -173,6 +191,35 @@ Garantias:
 - `MethodNotAllowed` mapeia para `405`
 - `NotImplemented` mapeia para `501`
 - ambiente de produção usa mensagem genérica para falhas internas
+
+Eventos públicos de lifecycle:
+- `ExceptionHandler::EVENT_BEFORE_HANDLE_THROWABLE`
+- `ExceptionHandler::EVENT_AFTER_HANDLE_THROWABLE`
+- `ExceptionHandler::EVENT_BEFORE_RENDER_WEB_THROWABLE`
+- `ExceptionHandler::EVENT_AFTER_RENDER_WEB_THROWABLE`
+
+Uso esperado:
+- esses eventos podem ser usados para logging, métricas e auditoria
+- o listener recebe o `Throwable` e, quando aplicável, o `WebResponse`
+
+### App lifecycle
+
+Arquivo:
+- [src/core/App.php](/home/mathmpr/PhpstormProjects/adige/src/core/App.php)
+
+Contrato externo:
+- `App` continua sendo o ponto de normalização de response e emissão final do transporte
+
+Eventos públicos de lifecycle:
+- `App::EVENT_BEFORE_NORMALIZE_RESPONSE`
+- `App::EVENT_AFTER_NORMALIZE_RESPONSE`
+- `App::EVENT_BEFORE_EMIT_RESPONSE`
+- `App::EVENT_AFTER_EMIT_RESPONSE`
+
+Uso esperado:
+- listeners podem observar o resultado bruto da action antes da normalização
+- listeners podem observar o `BaseResponse` final antes e depois do dispatch pelo app
+- isso é útil para logs, tracing, métricas e integração transversal sem acoplar no kernel
 
 ## API pública do ORM
 
@@ -242,6 +289,40 @@ Comportamentos públicos estabilizados:
 - `where()` usa grupos lógicos recursivos e operadores explícitos
 - eager loading suporta caminhos aninhados por dot notation
 
+Eventos públicos de lifecycle:
+- `ActiveRecord::EVENT_BEFORE_INSERT`
+- `ActiveRecord::EVENT_AFTER_INSERT`
+- `ActiveRecord::EVENT_BEFORE_UPDATE`
+- `ActiveRecord::EVENT_AFTER_UPDATE`
+- `ActiveRecord::EVENT_BEFORE_DELETE`
+- `ActiveRecord::EVENT_AFTER_DELETE`
+- `ActiveRecord::EVENT_BEFORE_LOAD`
+- `ActiveRecord::EVENT_AFTER_LOAD`
+- `ActiveRecord::EVENT_BEFORE_HYDRATE`
+- `ActiveRecord::EVENT_AFTER_HYDRATE`
+
+Uso esperado:
+- listeners podem ser registrados por instância com `on()`
+- listeners globais podem ser registrados por classe base ou concreta via [`src/core/events/Event.php`](/home/mathmpr/PhpstormProjects/adige/src/core/events/Event.php)
+- isso permite validar, auditar, transformar estado e produzir side effects ao redor do lifecycle do model
+
+## Sistema de eventos
+
+Arquivos:
+- [src/core/events/Observable.php](/home/mathmpr/PhpstormProjects/adige/src/core/events/Observable.php)
+- [src/core/events/Event.php](/home/mathmpr/PhpstormProjects/adige/src/core/events/Event.php)
+
+Contrato consolidado:
+- objetos observáveis expõem `on()` e `trigger()`
+- listeners podem ser registrados por instância
+- listeners globais podem ser registrados por classe com `Event::on()`
+- listeners globais registrados em uma classe base alcançam subclasses
+
+Garantias:
+- o primeiro argumento do listener é o objeto emissor
+- argumentos extras do trigger são repassados ao listener
+- `Event::clear()` existe para limpeza explícita de listeners globais
+
 ## Console consolidado
 
 Arquivos:
@@ -268,6 +349,7 @@ Os itens abaixo não devem ser tratados como contrato estável de aplicação:
   - resolução lazy e `instant => true`
 - detalhes internos de reflexão e binding em [src/core/routing/BaseRoute.php](/home/mathmpr/PhpstormProjects/adige/src/core/routing/BaseRoute.php)
 - formatação textual/HTML/JSON exata do [src/core/ExceptionHandler.php](/home/mathmpr/PhpstormProjects/adige/src/core/ExceptionHandler.php)
+  - os eventos do lifecycle são públicos, mas o layout exato da saída de erro não é
 - dialetos internos e builders do ORM:
   - `DsnBuilder`
   - `QueryBuilder`

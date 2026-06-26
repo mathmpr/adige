@@ -59,6 +59,7 @@ class ConsoleResponse extends BaseResponse
 
     public function dispatch(): void
     {
+        $this->trigger(self::EVENT_BEFORE_DISPATCH);
         if ($this->stdout !== '') {
             fwrite(STDOUT, $this->stdout);
         }
@@ -66,5 +67,6 @@ class ConsoleResponse extends BaseResponse
         if ($this->stderr !== '') {
             fwrite(STDERR, $this->stderr);
         }
+        $this->trigger(self::EVENT_AFTER_DISPATCH);
     }
 }

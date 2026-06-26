@@ -7,6 +7,7 @@ use Adige\console\ConsoleRequest;
 use Adige\core\collection\Collection;
 use Adige\core\database\ActiveRecord;
 use Adige\core\database\Schema;
+use Adige\core\events\Observable;
 use Adige\core\file\File;
 use Adige\core\http\http\FileResponse;
 use Adige\core\http\http\JsonResponse;
@@ -21,6 +22,13 @@ use Adige\core\routing\Router;
  */
 class App extends BaseObject
 {
+    use Observable;
+
+    public const EVENT_BEFORE_NORMALIZE_RESPONSE = 'beforeNormalizeResponse';
+    public const EVENT_AFTER_NORMALIZE_RESPONSE = 'afterNormalizeResponse';
+    public const EVENT_BEFORE_EMIT_RESPONSE = 'beforeEmitResponse';
+    public const EVENT_AFTER_EMIT_RESPONSE = 'afterEmitResponse';
+
     protected array $definitions = [];
 
     protected array $handlers = [];
@@ -193,15 +201,19 @@ class App extends BaseObject
 
     public function normalizeResponse(mixed $result, string $buffer = ''): BaseResponse
     {
-        return $this->createResponse($result, 200, [], $buffer);
+        $this->trigger(self::EVENT_BEFORE_NORMALIZE_RESPONSE, $result, $buffer);
+        $response = $this->createResponse($result, 200, [], $buffer);
+        $this->trigger(self::EVENT_AFTER_NORMALIZE_RESPONSE, $response, $result, $buffer);
+        return $response;
     }
 
     public function createResponse(
-        mixed $result,
-        int $statusCode = 200,
-        array $headers = [],
+        mixed  $result,
+        int    $statusCode = 200,
+        array  $headers = [],
         string $buffer = ''
-    ): BaseResponse {
+    ): BaseResponse
+    {
         if ($result instanceof BaseResponse) {
             return $result;
         }
@@ -226,9 +238,9 @@ class App extends BaseObject
     }
 
     protected function normalizeWebResponse(
-        mixed $result,
-        int $statusCode = 200,
-        array $headers = [],
+        mixed  $result,
+        int    $statusCode = 200,
+        array  $headers = [],
         string $buffer = ''
     ): WebResponse
     {
@@ -306,7 +318,9 @@ class App extends BaseObject
 
     public function emitResponse(BaseResponse $response): void
     {
+        $this->trigger(self::EVENT_BEFORE_EMIT_RESPONSE, $response);
         $response->dispatch();
+        $this->trigger(self::EVENT_AFTER_EMIT_RESPONSE, $response);
 
         if ($response instanceof ConsoleResponse) {
             exit($response->getExitCode());
@@ -315,22 +329,14 @@ class App extends BaseObject
 
     public function __get($name)
     {
-        if (in_array($name, Adige::HANDLERS)) {
-            if (!array_key_exists($name, $this->handlers) && array_key_exists($name, $this->definitions)) {
-                $this->handlers[$name] = $this->make($this->definitions[$name]);
-            }
-
-            return $this->handlers[$name] ?? null;
+        if (!array_key_exists($name, $this->handlers) && array_key_exists($name, $this->definitions)) {
+            $this->handlers[$name] = $this->make($this->definitions[$name]);
         }
-        return parent::__get($name);
+        return $this->handlers[$name] ?? null;
     }
 
     public function __set($name, $value)
     {
-        if (in_array($name, Adige::HANDLERS)) {
-            $this->handlers[$name] = $value;
-        } else {
-            parent::__set($name, $value);
-        }
+        $this->handlers[$name] = $value;
     }
 }

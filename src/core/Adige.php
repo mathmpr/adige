@@ -17,13 +17,6 @@ class Adige extends BaseObject
     const DB_HANDLER = 'db';
     const SCHEMA_CONFIG = 'schema';
 
-    const HANDLERS = [
-        self::REQUEST_HANDLER,
-        self::RESPONSE_HANDLER,
-        self::CACHE_HANDLER,
-        self::DB_HANDLER,
-        self::ROUTER_HANDLER,
-    ];
 
     /** @var class-string<App> */
     protected static string $appClass = App::class;

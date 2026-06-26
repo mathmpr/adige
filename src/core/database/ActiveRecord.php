@@ -4,6 +4,7 @@ namespace Adige\core\database;
 
 use Adige\core\BaseObject;
 use Adige\core\BaseException;
+use Adige\core\events\Observable;
 use Adige\helpers\Str;
 use Adige\core\collection\Collection;
 use Adige\core\database\dialects\mysql\MysqlQueryBuilder;
@@ -25,6 +26,19 @@ use Throwable;
  */
 abstract class ActiveRecord extends BaseObject
 {
+    use Observable;
+
+    const EVENT_BEFORE_INSERT = 'beforeInsert';
+    const EVENT_AFTER_INSERT = 'afterInsert';
+    const EVENT_BEFORE_UPDATE = 'beforeUpdate';
+    const EVENT_AFTER_UPDATE = 'afterUpdate';
+    const EVENT_BEFORE_DELETE = 'beforeDelete';
+    const EVENT_AFTER_DELETE = 'afterDelete';
+    const EVENT_BEFORE_LOAD = 'beforeLoad';
+    const EVENT_AFTER_LOAD = 'afterLoad';
+    const EVENT_BEFORE_HYDRATE = 'beforeHydrate';
+    const EVENT_AFTER_HYDRATE = 'afterHydrate';
+
     private static array $serializationStack = [];
 
     abstract public static function tableName(): string;
@@ -82,27 +96,21 @@ abstract class ActiveRecord extends BaseObject
 
     public function load(array $props = []): void
     {
-        if (!$this->canResolveSchemaMetadata()) {
-            foreach ($props as $prop => $value) {
-                $this->attributes[$prop] = $value;
-            }
+        $this->trigger(self::EVENT_BEFORE_LOAD);
 
-            return;
-        }
+        $this->assignLoadedAttributes($props);
 
-        foreach ($props as $prop => $value) {
-            if ($this->isSchemaField($prop)) {
-                $this->attributes[$prop] = $value;
-            }
-        }
+        $this->trigger(self::EVENT_AFTER_LOAD);
     }
 
     public function hydrate(array $props = []): void
     {
-        $this->load($props);
+        $this->trigger(self::EVENT_BEFORE_HYDRATE);
+        $this->assignLoadedAttributes($props);
 
         if (!$this->canResolveSchemaMetadata()) {
             $this->oldAttributes = $this->attributes;
+            $this->trigger(self::EVENT_AFTER_HYDRATE);
             return;
         }
 
@@ -113,6 +121,8 @@ abstract class ActiveRecord extends BaseObject
                 $this->oldAttributes[$name] = $value;
             }
         }
+
+        $this->trigger(self::EVENT_AFTER_HYDRATE);
     }
 
     /**
@@ -173,6 +183,7 @@ abstract class ActiveRecord extends BaseObject
         $connection = $this->resolveConnection($connection);
 
         if ($this->isNewRecord()) {
+            $this->trigger(self::EVENT_BEFORE_INSERT);
             $pkName = $this->getPkNameValue($connection);
             $this->beginInsert($connection)
                 ->build($connection);
@@ -181,6 +192,7 @@ abstract class ActiveRecord extends BaseObject
                 $this->{$pkName} = $result;
             }
             $this->syncPersistedState();
+            $this->trigger(self::EVENT_AFTER_INSERT);
             return true;
         }
 
@@ -189,6 +201,7 @@ abstract class ActiveRecord extends BaseObject
             return true;
         }
 
+        $this->trigger(self::EVENT_BEFORE_UPDATE);
         $id = $pkName !== null && array_key_exists($pkName, $this->oldAttributes)
             ? $this->oldAttributes[$pkName]
             : ($pkName !== null ? $this->{$pkName} : null);
@@ -200,6 +213,7 @@ abstract class ActiveRecord extends BaseObject
             ->build($connection);
         $connection->update($this->getRawSql(), $this->getQueryBuilder()->getParams());
         $this->syncPersistedState();
+        $this->trigger(self::EVENT_AFTER_UPDATE);
         return true;
     }
 
@@ -210,6 +224,7 @@ abstract class ActiveRecord extends BaseObject
     public function remove(?Connection $connection = null): bool
     {
         $connection = $this->resolveConnection($connection);
+        $this->trigger(self::EVENT_BEFORE_DELETE);
         $pkName = $this->getPkNameValue($connection);
         $this->beginDelete($connection)
             ->where([
@@ -217,6 +232,7 @@ abstract class ActiveRecord extends BaseObject
             ])
             ->build($connection);
         $connection->delete($this->getRawSql(), $this->getQueryBuilder()->getParams());
+        $this->trigger(self::EVENT_AFTER_DELETE);
         return true;
     }
 
@@ -821,6 +837,23 @@ abstract class ActiveRecord extends BaseObject
     {
         return empty($this->attributes)
             && empty($this->oldAttributes);
+    }
+
+    private function assignLoadedAttributes(array $props = []): void
+    {
+        if (!$this->canResolveSchemaMetadata()) {
+            foreach ($props as $prop => $value) {
+                $this->attributes[$prop] = $value;
+            }
+
+            return;
+        }
+
+        foreach ($props as $prop => $value) {
+            if ($this->isSchemaField($prop)) {
+                $this->attributes[$prop] = $value;
+            }
+        }
     }
 
     private function extractRelationSelects(): void
