@@ -15,8 +15,8 @@ class Adige extends BaseObject
     const CACHE_HANDLER = 'cache';
     const ROUTER_HANDLER = 'router';
     const DB_HANDLER = 'db';
+    const VIEW_HANDLER = 'view';
     const SCHEMA_CONFIG = 'schema';
-
 
     /** @var class-string<App> */
     protected static string $appClass = App::class;
