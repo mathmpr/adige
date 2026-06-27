@@ -4,6 +4,8 @@ Este documento consolida a baseline pública do Adige após:
 - `0.0.1` estabilização do core
 - `0.0.2` estabilização do ORM
 - `0.0.3` cleanup do console legado
+- `0.0.4` events and lifecycle
+- `0.0.5` views and migrations
 
 Objetivo:
 - deixar explícito o que aplicações podem usar com expectativa razoável de compatibilidade
@@ -91,6 +93,7 @@ Arquivo base:
 Contrato:
 - controllers expõem actions `action*`
 - `beforeAction()` e `afterAction()` participam do ciclo
+- `render()` delega para o componente de view configurado no app
 - actions podem retornar:
   - `BaseResponse`
   - `string`
@@ -102,6 +105,44 @@ Garantias:
 - o retorno da action é sempre normalizado para `BaseResponse`
 - route params têm precedência na injeção de parâmetros da action
 - o mesmo modelo de action/retorno vale para web e console
+- quando um componente `view` está configurado, controllers podem renderizar views por nome lógico
+
+### Views
+
+Arquivo base:
+- [src/core/BaseView.php](/home/mathmpr/PhpstormProjects/adige/src/core/BaseView.php)
+
+Configuração relacionada:
+- `Adige::VIEW_HANDLER`
+
+Contrato:
+- `BaseView` é o componente público de renderização síncrona por arquivos PHP
+- a resolução padrão usa um diretório base configurado por instância
+- aliases explícitos podem ser registrados, por exemplo `@shared/partial`
+- o formato do render continua sendo:
+  - `render(string $view, array $params = []): string`
+
+Comportamentos públicos estabilizados:
+- `escape()` expõe escaping HTML básico
+- `setViewDirectory()` e `getViewDirectory()` controlam o diretório base
+- `registerAlias()` e `getAliases()` controlam aliases explícitos
+- parâmetros da view são expostos por `extract(..., EXTR_SKIP)`
+
+Garantias:
+- o diretório de views é estado de instância, não global da classe
+- renderizações consecutivas não vazam caminho resolvido entre chamadas
+- nomes de views rejeitam path traversal e paths absolutos
+- falhas durante o render limpam corretamente o output buffer
+
+Eventos públicos de lifecycle:
+- `BaseView::EVENT_BEFORE_RENDER`
+- `BaseView::EVENT_AFTER_RENDER`
+- `BaseView::EVENT_RENDER_ERROR`
+
+Uso esperado:
+- aplicações configuram o handler `view` no app/bootstrap
+- controllers usam `render()` para delegar a composição ao `BaseView`
+- aliases são explícitos e não dependem de convenções mágicas de raiz do projeto
 
 ### Request
 
@@ -209,6 +250,7 @@ Arquivo:
 
 Contrato externo:
 - `App` continua sendo o ponto de normalização de response e emissão final do transporte
+- `App` continua sendo o ponto de resolução lazy de handlers configurados, incluindo `view` e `migrations`
 
 Eventos públicos de lifecycle:
 - `App::EVENT_BEFORE_NORMALIZE_RESPONSE`
@@ -220,6 +262,9 @@ Uso esperado:
 - listeners podem observar o resultado bruto da action antes da normalização
 - listeners podem observar o `BaseResponse` final antes e depois do dispatch pelo app
 - isso é útil para logs, tracing, métricas e integração transversal sem acoplar no kernel
+- aplicações podem fornecer configuração explícita para:
+  - `Adige::VIEW_HANDLER`
+  - `Adige::MIGRATIONS_CONFIG`
 
 ## API pública do ORM
 
@@ -305,6 +350,94 @@ Uso esperado:
 - listeners podem ser registrados por instância com `on()`
 - listeners globais podem ser registrados por classe base ou concreta via [`src/core/events/Event.php`](/home/mathmpr/PhpstormProjects/adige/src/core/events/Event.php)
 - isso permite validar, auditar, transformar estado e produzir side effects ao redor do lifecycle do model
+
+### `Migration`
+
+Arquivos:
+- [src/core/database/Migration.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/Migration.php)
+- [src/core/database/MigrationField.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/MigrationField.php)
+- [src/core/database/MigrationDialect.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/MigrationDialect.php)
+
+Dialetos públicos de suporte:
+- [src/core/database/dialects/mysql/MysqlMigration.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/dialects/mysql/MysqlMigration.php)
+- [src/core/database/dialects/sqlite/SqliteMigration.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/dialects/sqlite/SqliteMigration.php)
+
+Contrato:
+- migrations são arquivos descobertos por filename
+- o filename é a identidade canônica da migration
+- um arquivo de migration deve retornar uma instância de `Migration`
+- a conexão pode ser injetada após a construção via `setConnection()`
+
+Comportamentos públicos estabilizados:
+- `createTable()`
+- `dropTable()`
+- `addColumn()`
+- `dropField()`
+- `field()` para criar `MigrationField`
+- `executeUp()`
+- `executeDown()`
+- `MigrationField` expõe um builder fluente com:
+  - `type()`
+  - `integer()`
+  - `string()`
+  - `text()`
+  - `boolean()`
+  - `timestamp()`
+  - `nullable()`
+  - `notNull()`
+  - `default()`
+  - `primary()`
+  - `unique()`
+  - `autoIncrement()`
+
+Garantias:
+- a tabela de metadata `migrations` é garantida antes da execução
+- a metadata inclui:
+  - `name`
+  - `batch`
+  - `created_at`
+- `executeUp()` roda migrations pendentes dentro do fluxo transacional do framework
+- `executeDown()` reverte pelo mesmo fluxo
+- o framework suporta MySQL e SQLite sem fallback silencioso também para migrations
+
+Uso esperado:
+- migrações novas usam o formato:
+
+```php
+use Adige\core\database\Migration;
+
+return new class extends Migration {
+    public function up(): void
+    {
+    }
+
+    public function down(): void
+    {
+    }
+};
+```
+
+- aplicações podem configurar o path de discovery por `Adige::MIGRATIONS_CONFIG`
+
+### Console migrations
+
+Arquivo:
+- [src/console/controllers/MigrateController.php](/home/mathmpr/PhpstormProjects/adige/src/console/controllers/MigrateController.php)
+
+Contrato:
+- o console expõe um fluxo público mínimo de migrations sobre o modelo controller/action
+
+Comandos públicos estabilizados:
+- `migrate/create --name=...`
+- `migrate/up`
+- `migrate/down`
+- `migrate/down --steps=2`
+
+Garantias:
+- `migrate/up` aplica todas as pendentes em um único novo batch
+- `migrate/down` sem `steps` reverte o último batch
+- `migrate/down --steps=N` reverte os `N` batches mais recentes
+- o diretório default de migrations é `ROOT/migrations` quando nenhuma configuração explícita é fornecida
 
 ## Sistema de eventos
 

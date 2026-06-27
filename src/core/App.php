@@ -20,6 +20,7 @@ use Adige\core\routing\Router;
  * @property WebResponse|ConsoleResponse|null $response
  * @property Router $router
  * @property BaseView $view
+ * @property array $migrations
  */
 class App extends BaseObject
 {
@@ -84,9 +85,8 @@ class App extends BaseObject
     private function bootstrap(): array
     {
         $directories = [
-            ROOT . 'app/common',
-            ROOT . 'app/console',
-            ROOT . 'app/web'
+            ROOT,
+            APP_ROOT
         ];
         $bootstrap = [];
         foreach ($directories as $directory) {
