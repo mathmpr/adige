@@ -2,7 +2,7 @@
 
 namespace Adige\core;
 
-use Adige\file\File;
+use Adige\core\file\File;
 
 class BaseEnvironment extends BaseObject
 {
@@ -79,14 +79,19 @@ class BaseEnvironment extends BaseObject
         }
     }
 
-    public static function getEnv(string $key): bool|int|float|string|null
+    public static function getEnv(string $key, mixed $default = null): bool|int|float|string|null
     {
-        return self::$env[$key] ?? null;
+        return self::$env[$key] ?? $default ?? null;
     }
 
     public static function setEnv(string $key, string $value): void
     {
         self::$env[$key] = $value;
+    }
+
+    public static function isConsoleApp(): bool
+    {
+        return php_sapi_name() === 'cli';
     }
 
 }

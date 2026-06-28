@@ -3,12 +3,8 @@
 
 include 'vendor/autoload.php';
 
-use Adige\cli\Console;
+use Adige\core\Adige;
 
 const ROOT = __DIR__ . DIRECTORY_SEPARATOR;
 
-global $_argv, $_argc;
-$_argv = $argv;
-$_argc = $argc;
-
-new Console();
+Adige::run();

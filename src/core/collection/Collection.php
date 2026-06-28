@@ -363,14 +363,6 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
         return !($this->count() > 0);
     }
 
-    public function __get($name)
-    {
-        if (count($this) > 0 && is_object($this[0]) && $this[0] instanceof ActiveRecord) {
-            return $this[0]->{$name};
-        }
-        return $this->collection;
-    }
-
     /**
      * @return array
      */

@@ -5,6 +5,23 @@ Project aimed at studying the PHP and MySQL languages mainly, which can cover JS
 
 Adige is the second-largest river in Italy, it was and still is one of the most important rivers in the country since the Middle Ages. The river gives its name to the Trentino-Alto Adige region. The name of the project is just a tribute to the memories of a trip that one of the collaborators (@mathmpr) took to this region of Italy.
 
+## Stabilization target
+
+The current stabilization target is `0.0.1`.
+
+At this stage, Adige can be described as a stabilized microframework for the `0.0.1` line:
+- small and focused
+- tested around its HTTP core, router, middleware and response flow
+- suitable for small, controlled and serious projects
+
+Important scope note:
+- Adige is not positioned as a general replacement for large, battle-tested frameworks
+- the current `0.0.1` scope is best suited for small applications, internal tools, simple APIs and controlled production environments
+- the ORM layer is still less mature than the HTTP/kernel core
+
+Public API and compatibility notes for this target are documented in:
+- [PUBLIC_API.md](/home/mathmpr/PhpstormProjects/adige/PUBLIC_API.md)
+
 ## Git rules
 
 Let's try to use git in a professional way, for this we will establish some rules.
@@ -48,3 +65,26 @@ To start the project with composer you need to download composer. To do this, en
 If everything goes well, the root of the project will have the file `composer.phar`.
 
 Run the following commands in this order: `php composer.phar install` and then `php composer.phar dump-autoload`.
+
+## Tests
+
+The core test suite is based on PHPUnit.
+
+Run the full unit suite:
+
+```bash
+vendor/bin/phpunit --do-not-cache-result tests/Unit
+```
+
+Run a single test file:
+
+```bash
+vendor/bin/phpunit --do-not-cache-result tests/Unit/Routing/RouterFindRouteTest.php
+```
+
+Current tests focus on framework contracts such as:
+- router matching and autodiscovery precedence
+- route parameter resolution
+- middleware short-circuit and failure handling
+- response normalization
+- HTTP request/response behavior without a real web server
