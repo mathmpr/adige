@@ -2,6 +2,8 @@
 
 namespace Adige\core;
 
+use Adige\console\CommandCatalog;
+use Adige\core\events\Observable;
 use Adige\core\http\http\WebRequest;
 use Adige\core\http\http\WebResponse;
 use Adige\core\http\http\exceptions\MethodNotAllowed;
@@ -12,6 +14,13 @@ use Throwable;
 
 class ExceptionHandler extends BaseObject
 {
+    use Observable;
+
+    public const EVENT_BEFORE_HANDLE_THROWABLE = 'beforeHandleThrowable';
+    public const EVENT_AFTER_HANDLE_THROWABLE = 'afterHandleThrowable';
+    public const EVENT_BEFORE_RENDER_WEB_THROWABLE = 'beforeRenderWebThrowable';
+    public const EVENT_AFTER_RENDER_WEB_THROWABLE = 'afterRenderWebThrowable';
+
     protected const GENERIC_MESSAGE = 'An internal error occurred.';
 
     protected int $baseOutputBufferLevel = 0;
@@ -57,6 +66,7 @@ class ExceptionHandler extends BaseObject
 
     public function handleThrowable(Throwable $throwable, bool $terminate = true): void
     {
+        $this->trigger(self::EVENT_BEFORE_HANDLE_THROWABLE, $throwable, $terminate);
         if (!$this->isDebugMode()) {
             $this->logThrowable($throwable);
         }
@@ -70,10 +80,13 @@ class ExceptionHandler extends BaseObject
         if ($terminate) {
             exit(1);
         }
+
+        $this->trigger(self::EVENT_AFTER_HANDLE_THROWABLE, $throwable, $terminate);
     }
 
     public function renderWebThrowable(Throwable $throwable): WebResponse
     {
+        $this->trigger(self::EVENT_BEFORE_RENDER_WEB_THROWABLE, $throwable);
         while (ob_get_level() > $this->baseOutputBufferLevel) {
             ob_end_clean();
         }
@@ -89,11 +102,13 @@ class ExceptionHandler extends BaseObject
         if ($request instanceof WebRequest && $request->acceptsJson()) {
             $response->getHeaders()?->setHeader('Content-Type', 'application/json');
             $response->setBody(encode_json($this->buildErrorPayload($throwable)));
+            $this->trigger(self::EVENT_AFTER_RENDER_WEB_THROWABLE, $throwable, $response);
             return $response;
         }
 
         $response->getHeaders()?->setHeader('Content-Type', 'text/html; charset=UTF-8');
         $response->setBody($this->buildHtmlErrorPage($throwable));
+        $this->trigger(self::EVENT_AFTER_RENDER_WEB_THROWABLE, $throwable, $response);
         return $response;
     }
 
@@ -103,7 +118,7 @@ class ExceptionHandler extends BaseObject
             return sprintf(
                 "Error: %s\n",
                 $this->resolveUserFacingMessage($throwable)
-            );
+            ) . $this->buildConsoleSuggestions($throwable);
         }
 
         return sprintf(
@@ -112,7 +127,7 @@ class ExceptionHandler extends BaseObject
             $throwable->getFile(),
             $throwable->getLine(),
             $throwable->getTraceAsString()
-        );
+        ) . $this->buildConsoleSuggestions($throwable);
     }
 
     public function buildErrorPayload(Throwable $throwable): array
@@ -236,5 +251,28 @@ HTML;
             $throwable->getFile(),
             $throwable->getLine()
         ));
+    }
+
+    protected function buildConsoleSuggestions(Throwable $throwable): string
+    {
+        if (!$throwable instanceof RouteNotFound) {
+            return '';
+        }
+
+        $router = Adige::$app?->router;
+        $request = Adige::$app?->request;
+        $namespaces = $router?->getControllerNamespaces() ?? [];
+        $input = $request?->getUri();
+
+        if (empty($namespaces) || !is_string($input) || trim($input) === '') {
+            return '';
+        }
+
+        $suggestions = (new CommandCatalog($namespaces))->suggest($input);
+        if (empty($suggestions)) {
+            return '';
+        }
+
+        return "\nDid you mean:\n- " . implode("\n- ", $suggestions) . "\n";
     }
 }
