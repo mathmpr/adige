@@ -7,6 +7,7 @@ use Adige\core\controller\exceptions\RequiredParamNotFound;
 use Adige\core\http\http\exceptions\NotImplemented;
 use ReflectionException;
 use Throwable;
+use RuntimeException;
 
 class Adige extends BaseObject
 {
@@ -15,8 +16,9 @@ class Adige extends BaseObject
     const CACHE_HANDLER = 'cache';
     const ROUTER_HANDLER = 'router';
     const DB_HANDLER = 'db';
+    const VIEW_HANDLER = 'view';
     const SCHEMA_CONFIG = 'schema';
-
+    const MIGRATIONS_CONFIG = 'migrations';
 
     /** @var class-string<App> */
     protected static string $appClass = App::class;
@@ -29,6 +31,10 @@ class Adige extends BaseObject
 
     public static function loadEnv(): void
     {
+        if (!defined('ROOT')) {
+            throw new RuntimeException('ROOT constant is not defined.');
+        }
+
         if (!defined('APP_ROOT')) {
             define('APP_ROOT', ROOT);
         }

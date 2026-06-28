@@ -19,6 +19,8 @@ use Adige\core\routing\Router;
  * @property ConsoleRequest|WebRequest $request
  * @property WebResponse|ConsoleResponse|null $response
  * @property Router $router
+ * @property BaseView $view
+ * @property array $migrations
  */
 class App extends BaseObject
 {
@@ -74,10 +76,8 @@ class App extends BaseObject
         return $isConsoleApp
             ? [
                 'Adige\\console\\controllers',
-                'app\\console\\controllers',
             ]
             : [
-                'app\\web\\controllers',
                 'app\\controllers',
             ];
     }
@@ -85,9 +85,8 @@ class App extends BaseObject
     private function bootstrap(): array
     {
         $directories = [
-            ROOT . 'app/common',
-            ROOT . 'app/console',
-            ROOT . 'app/web'
+            ROOT,
+            APP_ROOT
         ];
         $bootstrap = [];
         foreach ($directories as $directory) {
@@ -338,5 +337,10 @@ class App extends BaseObject
     public function __set($name, $value)
     {
         $this->handlers[$name] = $value;
+    }
+
+    public function __isset($name)
+    {
+        return isset($this->handlers[$name]) || isset($this->definitions[$name]);
     }
 }
