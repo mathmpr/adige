@@ -3,6 +3,7 @@
 use Adige\core\Adige;
 use Adige\core\http\http\WebResponse;
 use Adige\core\database\Connection;
+use Adige\core\BaseView;
 
 return [
     Adige::ROUTER_HANDLER => [
@@ -27,5 +28,12 @@ return [
     Adige::SCHEMA_CONFIG => [
         'cache' => 'file',
         'path' => APP_ROOT . 'schema.json',
+    ],
+    Adige::VIEW_HANDLER => [
+        'class' => BaseView::class,
+        'instant' => true,
+        '__construct()' => [
+            'viewDirectory' => APP_ROOT . 'views',
+        ],
     ]
 ];

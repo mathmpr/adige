@@ -147,6 +147,7 @@ class WebResponse extends BaseResponse
 
     public function dispatch(): void
     {
+        $this->trigger(self::EVENT_BEFORE_DISPATCH);
         header("HTTP/1.1 " . $this->getFullStatus());
         foreach ($this->getDispatchHeaders() as $name => $value) {
             header($name . ': ' . $value);
@@ -157,6 +158,7 @@ class WebResponse extends BaseResponse
         if ($this->body instanceof File) {
             readfile($this->body->getLocation());
         }
+        $this->trigger(self::EVENT_AFTER_DISPATCH);
     }
 
 }

@@ -15,4 +15,15 @@ use Adige\core\routing\Router;
  */
 class App extends BaseApp
 {
+    protected function defaultControllerNamespaces(bool $isConsoleApp): array
+    {
+        return array_merge(parent::defaultControllerNamespaces($isConsoleApp), $isConsoleApp
+            ? [
+                'app\\console\\controllers',
+            ]
+            : [
+                'app\\web\\controllers',
+            ]
+        );
+    }
 }
