@@ -9,12 +9,17 @@ use Adige\core\http\http\exceptions\MethodNotAllowed;
 use Adige\core\http\http\exceptions\NotImplemented;
 use Adige\core\http\http\exceptions\RouteNotFound;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\TestApp;
+use Tests\Support\TestRequest;
+use Adige\core\Adige;
+use Adige\core\routing\Router;
 
 class AdigeHttpErrorHandlingTest extends TestCase
 {
     protected function tearDown(): void
     {
         BaseEnvironment::setEnv('APP_DEBUG', 'false');
+        Adige::$app = null;
         parent::tearDown();
     }
 
@@ -48,6 +53,26 @@ class AdigeHttpErrorHandlingTest extends TestCase
 
         self::assertStringContainsString('Error: boom', $message);
         self::assertStringContainsString('.php:', $message);
+    }
+
+    public function testBuildConsoleErrorMessageSuggestsSimilarConsoleCommand(): void
+    {
+        BaseEnvironment::setEnv('APP_DEBUG', 'false');
+        $request = new TestRequest('server/star', 'CONSOLE');
+        $router = new Router($request, null, true);
+        $router->setControllerNamespaces(['Adige\\console\\controllers']);
+
+        $app = new TestApp();
+        $app->request = $request;
+        $app->router = $router;
+        Adige::$app = $app;
+
+        $handler = new ExceptionHandler();
+
+        $message = $handler->buildConsoleErrorMessage(new RouteNotFound('Route not found: server/star'));
+
+        self::assertStringContainsString('Did you mean:', $message);
+        self::assertStringContainsString('server/start', $message);
     }
 
     public function testBuildErrorPayloadIsDetailedInDebugMode(): void

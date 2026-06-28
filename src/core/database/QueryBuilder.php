@@ -50,6 +50,31 @@ abstract class QueryBuilder extends BaseObject
         return $this;
     }
 
+    public function setWhereCondition(array $condition): self
+    {
+        $this->commands['where'] = $condition;
+        return $this;
+    }
+
+    public function appendWhereCondition(string $operator, array $condition): self
+    {
+        $normalizedOperator = strtoupper(trim($operator));
+        $existing = $this->commands['where'] ?? null;
+
+        if ($existing === null) {
+            $this->commands['where'] = $condition;
+            return $this;
+        }
+
+        $this->commands['where'] = [
+            $normalizedOperator,
+            $existing,
+            $condition,
+        ];
+
+        return $this;
+    }
+
     public function getRawSql(): string
     {
         return $this->rawSql;
@@ -97,11 +122,66 @@ abstract class QueryBuilder extends BaseObject
 
     protected function parseField(string $field, string $tableName, ?string $pkName): string
     {
-        return str_replace(
+        $parsed = str_replace(
             [':tableName', ':pkName'],
             [$tableName, $pkName],
             $field
         );
+
+        $parsed = $this->resolveFieldAliasReference($parsed);
+
+        return $this->qualifyField($parsed, $tableName);
+    }
+
+    protected function resolveFieldAliasReference(string $field): string
+    {
+        $aliasMap = $this->getCommand('fieldAliasMap', []);
+        if (!is_array($aliasMap) || empty($aliasMap)) {
+            return $field;
+        }
+
+        $trimmed = trim($field);
+        if ($trimmed === '') {
+            return $field;
+        }
+
+        if (preg_match('/^([A-Za-z_][A-Za-z0-9_.]*)\.(.+)$/', $trimmed, $matches) !== 1) {
+            return $field;
+        }
+
+        $reference = $matches[1];
+        $suffix = $matches[2];
+
+        if (!array_key_exists($reference, $aliasMap)) {
+            return $field;
+        }
+
+        return $aliasMap[$reference] . '.' . $suffix;
+    }
+
+    protected function qualifyField(string $field, string $tableName): string
+    {
+        $trimmed = trim($field);
+
+        if (
+            $trimmed === ''
+            || str_contains($trimmed, '.')
+            || str_contains($trimmed, '(')
+            || str_contains($trimmed, ' ')
+            || str_contains($trimmed, ':')
+        ) {
+            return $field;
+        }
+
+        if (str_starts_with($trimmed, '`') && str_ends_with($trimmed, '`')) {
+            return $tableName . '.' . $trimmed;
+        }
+
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $trimmed) === 1) {
+            return $tableName . '.' . $trimmed;
+        }
+
+        return $field;
     }
 
 }

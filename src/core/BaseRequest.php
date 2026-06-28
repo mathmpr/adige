@@ -2,9 +2,16 @@
 
 namespace Adige\core;
 
+use Adige\core\events\Observable;
+
 abstract class BaseRequest extends BaseObject
 {
-    use EventHandler;
+    use Observable;
+
+    public const EVENT_BEFORE_INIT = 'beforeInit';
+    public const EVENT_AFTER_INIT = 'afterInit';
+    public const EVENT_BEFORE_FIX_URI = 'beforeFixUri';
+    public const EVENT_AFTER_FIX_URI = 'afterFixUri';
 
     protected string $uri;
 
@@ -29,7 +36,11 @@ abstract class BaseRequest extends BaseObject
 
     public function init(): void
     {
+        $this->trigger(self::EVENT_BEFORE_INIT);
+        $this->trigger(self::EVENT_BEFORE_FIX_URI);
         $this->fixUri();
+        $this->trigger(self::EVENT_AFTER_FIX_URI);
+        $this->trigger(self::EVENT_AFTER_INIT);
     }
 
     public function getUri(): string

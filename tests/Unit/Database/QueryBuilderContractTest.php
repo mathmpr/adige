@@ -38,9 +38,8 @@ class QueryBuilderContractTest extends TestCase
 
         self::assertSame($query, $query->select(['id', 'title']));
         self::assertSame($query, $query->where([':tableName.user_id' => 10]));
-        self::assertSame($query, $query->andWhere([':tableName.title' => 'Ada']));
-        self::assertSame($query, $query->orWhere([':tableName.title' => 'Grace']));
-        self::assertSame($query, $query->whereIn([':tableName.id' => [1, 2]]));
+        self::assertSame($query, $query->andWhere(['OR', [':tableName.title' => 'Ada'], [':tableName.title' => 'Grace']]));
+        self::assertSame($query, $query->orWhere([':tableName.id', 'NOT IN', [1, 2]]));
         self::assertSame($query, $query->innerJoin('comments', ':tableName.`:pkName` = comments.post_id'));
         self::assertSame($query, $query->leftJoin('comments', ':tableName.`:pkName` = comments.post_id'));
         self::assertSame($query, $query->rightJoin('comments', ':tableName.`:pkName` = comments.post_id'));
@@ -51,42 +50,203 @@ class QueryBuilderContractTest extends TestCase
         $query = QueryBuilderPost::find($this->connection)
             ->select(['id', 'title'])
             ->innerJoin('comments', ':tableName.`:pkName` = comments.post_id')
-            ->where([':tableName.user_id' => 10])
-            ->andWhere([':tableName.title' => 'Ada'])
-            ->orWhereIn([':tableName.id' => [1, 2]])
+            ->where([
+                'AND',
+                [':tableName.user_id' => 10],
+                [':tableName.title', 'NOT IN', ['Ada', 'Grace']],
+            ])
             ->orderByAsc('title')
             ->build($this->connection);
 
         self::assertSame(
             'SELECT  posts.id, posts.title FROM posts  INNER JOIN comments ON posts.`id` = comments.post_id ' .
-            'WHERE posts.user_id=:arg0 AND (posts.title=:arg1 OR (posts.id IN (:arg2, :arg3))) ORDER BY title ASC',
+            'WHERE (posts.user_id=:arg0 AND posts.title NOT IN (:arg1, :arg2)) ORDER BY title ASC',
             $query->getRawSql()
         );
         self::assertSame([
             'arg0' => 10,
             'arg1' => 'Ada',
-            'arg2' => 1,
-            'arg3' => 2,
+            'arg2' => 'Grace',
         ], $this->getQueryBuilder($query)->getParams());
     }
 
-    public function testWhereAndWhereOrWhereAcceptBothEqualityAndIndexedComparisonFormats(): void
+    public function testNestedWhereGroupsCompileByArrayDepth(): void
     {
         $query = QueryBuilderPost::find($this->connection)
             ->select(['id'])
-            ->where([':tableName.user_id' => 10])
-            ->andWhere([':tableName.id', '>', 1])
-            ->orWhere([':tableName.id', '<', 99])
+            ->where([
+                'AND',
+                ['id' => 10],
+                ['title', 'NOT IN', ['Ada', 'Grace']],
+                ['OR',
+                    ['deleted_at', '!=', null],
+                    ['score', '>', 100],
+                ],
+            ])
             ->build($this->connection);
 
         self::assertSame(
-            'SELECT  posts.id FROM posts   WHERE posts.user_id=:arg0 AND (posts.id>:arg1 OR (posts.id<:arg2))',
+            'SELECT  posts.id FROM posts   WHERE (posts.id=:arg0 AND posts.title NOT IN (:arg1, :arg2) ' .
+            'AND (posts.deleted_at IS NOT NULL OR posts.score>:arg3))',
             $query->getRawSql()
         );
         self::assertSame([
             'arg0' => 10,
-            'arg1' => 1,
-            'arg2' => 99,
+            'arg1' => 'Ada',
+            'arg2' => 'Grace',
+            'arg3' => 100,
+        ], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testDeeplyNestedWhereGroupsSupportMultipleLevelsAndOperators(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->where([
+                'AND',
+                ['id' => 10],
+                ['OR',
+                    ['deleted_at', '=', null],
+                    ['AND',
+                        ['status', 'IN', ['open', 'pending']],
+                        ['OR',
+                            ['score', '>=', 100],
+                            ['score', '<', 0],
+                        ],
+                    ],
+                ],
+                ['title', 'NOT IN', ['Ada', 'Grace']],
+            ])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts   WHERE (posts.id=:arg0 AND (posts.deleted_at IS NULL OR ' .
+            '(posts.status IN (:arg1, :arg2) AND (posts.score>=:arg3 OR posts.score<:arg4))) ' .
+            'AND posts.title NOT IN (:arg5, :arg6))',
+            $query->getRawSql()
+        );
+        self::assertSame([
+            'arg0' => 10,
+            'arg1' => 'open',
+            'arg2' => 'pending',
+            'arg3' => 100,
+            'arg4' => 0,
+            'arg5' => 'Ada',
+            'arg6' => 'Grace',
+        ], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testRootWhereCallsComposeNewGroupsAcrossMethods(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->where(['id' => 10])
+            ->andWhere(['OR', ['title' => 'Ada'], ['title' => 'Grace']])
+            ->orWhere(['status', '=', 'archived'])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts   WHERE ((posts.id=:arg0 AND (posts.title=:arg1 OR posts.title=:arg2)) OR posts.status=:arg3)',
+            $query->getRawSql()
+        );
+        self::assertSame([
+            'arg0' => 10,
+            'arg1' => 'Ada',
+            'arg2' => 'Grace',
+            'arg3' => 'archived',
+        ], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testRootCompositionKeepsNestedGroupsIsolatedAcrossCalls(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->where([
+                'OR',
+                ['status' => 'open'],
+                ['AND',
+                    ['score', '>', 50],
+                    ['published_at', '!=', null],
+                ],
+            ])
+            ->andWhere([
+                'AND',
+                ['title', 'LIKE', '%vip%'],
+                ['OR',
+                    ['deleted_at', '=', null],
+                    ['deleted_at', '>', '2026-01-01 00:00:00'],
+                ],
+            ])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts   WHERE ((posts.status=:arg0 OR (posts.score>:arg1 AND posts.published_at IS NOT NULL)) ' .
+            'AND (posts.titleLIKE:arg2 AND (posts.deleted_at IS NULL OR posts.deleted_at>:arg3)))',
+            $query->getRawSql()
+        );
+        self::assertSame([
+            'arg0' => 'open',
+            'arg1' => 50,
+            'arg2' => '%vip%',
+            'arg3' => '2026-01-01 00:00:00',
+        ], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testNullComparisonsBecomeIsNullAndIsNotNull(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->where([
+                'OR',
+                ['deleted_at', '=', null],
+                ['published_at', '!=', null],
+            ])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts   WHERE (posts.deleted_at IS NULL OR posts.published_at IS NOT NULL)',
+            $query->getRawSql()
+        );
+        self::assertSame([], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testEqualityMapWithMultipleFieldsCompilesAsAndGroup(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->where([
+                'id' => 10,
+                'status' => 'open',
+            ])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts   WHERE (posts.id=:arg0 AND posts.status=:arg1)',
+            $query->getRawSql()
+        );
+        self::assertSame([
+            'arg0' => 10,
+            'arg1' => 'open',
+        ], $this->getQueryBuilder($query)->getParams());
+    }
+
+    public function testWhereQualifiesSimpleFieldNamesWithRootTable(): void
+    {
+        $query = QueryBuilderPost::find($this->connection)
+            ->select(['id'])
+            ->innerJoin('comments', ':tableName.`:pkName` = comments.post_id')
+            ->where(['id' => 10])
+            ->andWhere(['title', '!=', 'Ada'])
+            ->build($this->connection);
+
+        self::assertSame(
+            'SELECT  posts.id FROM posts  INNER JOIN comments ON posts.`id` = comments.post_id ' .
+            'WHERE (posts.id=:arg0 AND posts.title!=:arg1)',
+            $query->getRawSql()
+        );
+        self::assertSame([
+            'arg0' => 10,
+            'arg1' => 'Ada',
         ], $this->getQueryBuilder($query)->getParams());
     }
 
@@ -119,6 +279,38 @@ class QueryBuilderContractTest extends TestCase
                         [
                             'Field' => 'title',
                             'Type' => 'varchar(255)',
+                            'Null' => 'YES',
+                            'Key' => '',
+                            'Default' => null,
+                            'Extra' => '',
+                        ],
+                        [
+                            'Field' => 'status',
+                            'Type' => 'varchar(255)',
+                            'Null' => 'YES',
+                            'Key' => '',
+                            'Default' => null,
+                            'Extra' => '',
+                        ],
+                        [
+                            'Field' => 'deleted_at',
+                            'Type' => 'datetime',
+                            'Null' => 'YES',
+                            'Key' => '',
+                            'Default' => null,
+                            'Extra' => '',
+                        ],
+                        [
+                            'Field' => 'published_at',
+                            'Type' => 'datetime',
+                            'Null' => 'YES',
+                            'Key' => '',
+                            'Default' => null,
+                            'Extra' => '',
+                        ],
+                        [
+                            'Field' => 'score',
+                            'Type' => 'int',
                             'Null' => 'YES',
                             'Key' => '',
                             'Default' => null,

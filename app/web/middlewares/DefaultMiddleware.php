@@ -4,13 +4,15 @@ namespace app\web\middlewares;
 
 use Adige\core\BaseRequest;
 use Adige\core\BaseResponse;
-use Adige\core\middleware\Middleware;
+use Adige\core\http\http\WebRequest;
+use Adige\core\http\http\WebResponse;
+use Adige\core\middleware\WebMiddleware;
 
-class DefaultMiddleware extends Middleware
+class DefaultMiddleware extends WebMiddleware
 {
-    public function handle(BaseRequest $request, ?BaseResponse $response): ?BaseResponse
+    public function handle(WebRequest|BaseRequest $request, WebResponse|BaseResponse|null $response): ?WebResponse
     {
-        // Default middleware intentionally does not mutate the request.
+        $request->setGet(['message' => 'ok']);
         return null;
     }
 }

@@ -18,6 +18,8 @@ class ActiveRecordStateTest extends TestCase
 
     private array $selectQueries = [];
 
+    private array $insertQueries = [];
+
     private array $updateQueries = [];
 
     private array $deleteQueries = [];
@@ -30,6 +32,7 @@ class ActiveRecordStateTest extends TestCase
         Schema::useMemoryCache();
         Schema::clearCache();
         $this->selectQueries = [];
+        $this->insertQueries = [];
         $this->updateQueries = [];
         $this->deleteQueries = [];
 
@@ -67,6 +70,33 @@ class ActiveRecordStateTest extends TestCase
         self::assertSame($post->getAttributes()['id'], $post->getOldAttributes()['id']);
         self::assertArrayHasKey('id', $post->getOldAttributes());
         self::assertSame('Grace', $post->getOldAttributes()['title']);
+    }
+
+    public function testConstructionCanDeferSchemaResolutionUntilSaveTime(): void
+    {
+        $post = new OrmStatePost([
+            'user_id' => 22,
+            'title' => 'Grace',
+            'label' => 'draft',
+        ]);
+
+        self::assertSame('Grace', $post->title);
+        self::assertSame('draft', $post->label);
+        self::assertSame([], $post->getOldAttributes());
+
+        self::assertTrue($post->save($this->connection));
+        self::assertCount(1, $this->insertQueries);
+        self::assertStringContainsString('INSERT INTO posts', $this->insertQueries[0]['sql']);
+        self::assertSame([
+            'arg0' => 22,
+            'arg1' => 'Grace',
+        ], $this->insertQueries[0]['params']);
+        self::assertSame('draft', $post->label);
+        self::assertSame([
+            'user_id' => 22,
+            'title' => 'Grace',
+            'id' => 2,
+        ], $post->getOldAttributes());
     }
 
     public function testChangingLoadedAttributesMarksOnlyChangedFieldsAndCanRevertToCleanState(): void
@@ -218,6 +248,111 @@ class ActiveRecordStateTest extends TestCase
         ));
     }
 
+    public function testWithSupportsNestedRelationPathsForCollectionEagerLoad(): void
+    {
+        $posts = OrmStatePost::find($this->connection)
+            ->select(['*'])
+            ->with(['comments.post'])
+            ->all($this->connection);
+
+        self::assertCount(2, $posts);
+        self::assertCount(1, $posts[0]->comments);
+        self::assertArrayHasKey('post', $posts[0]->comments[0]->getRelations());
+        self::assertSame(1, $posts[0]->comments[0]->post->id);
+        self::assertSame('Ada', $posts[0]->comments[0]->post->title);
+        self::assertArrayHasKey('post', $posts[1]->comments[0]->getRelations());
+        self::assertSame(2, $posts[1]->comments[0]->post->id);
+        self::assertSame('Grace', $posts[1]->comments[0]->post->title);
+        self::assertCount(1, array_filter(
+            $this->selectQueries,
+            static fn (string $sql): bool => str_contains($sql, 'FROM comments')
+        ));
+        self::assertCount(2, array_filter(
+            $this->selectQueries,
+            static fn (string $sql): bool => str_contains($sql, 'FROM posts')
+        ));
+        self::assertTrue((bool) array_filter(
+            $this->selectQueries,
+            static fn (string $sql): bool => str_contains($sql, 'FROM posts') && str_contains($sql, ' IN ')
+        ));
+    }
+
+    public function testAsArrayOneStillPopulatesEagerLoadedRelations(): void
+    {
+        $post = OrmStatePost::find($this->connection)
+            ->select(['*'])
+            ->with(['comments.post'])
+            ->where([
+                ':tableName.`:pkName`' => 1
+            ])
+            ->asArray()
+            ->one($this->connection);
+
+        self::assertNotNull($post);
+        self::assertArrayHasKey('comments', $post->getRelations());
+        self::assertCount(1, $post->comments);
+        self::assertArrayHasKey('post', $post->comments[0]->getRelations());
+        self::assertSame(1, $post->comments[0]->post->id);
+    }
+
+    public function testJoinWithHydratesHasManyRelationsFromSingleQuery(): void
+    {
+        $posts = OrmStatePost::find($this->connection)
+            ->joinWith(['comments'])
+            ->all($this->connection);
+
+        self::assertCount(2, $posts);
+        self::assertCount(1, $this->selectQueries);
+        self::assertCount(1, $posts[0]->comments);
+        self::assertSame('first', $posts[0]->comments[0]->body);
+        self::assertCount(1, $posts[1]->comments);
+        self::assertSame('second', $posts[1]->comments[0]->body);
+    }
+
+    public function testJoinWithSupportsNestedRelationsFromSingleQuery(): void
+    {
+        $posts = OrmStatePost::find($this->connection)
+            ->joinWith(['comments.post'])
+            ->all($this->connection);
+
+        self::assertCount(2, $posts);
+        self::assertCount(1, $this->selectQueries);
+        self::assertCount(1, $posts[0]->comments);
+        self::assertSame('Ada', $posts[0]->comments[0]->post->title);
+        self::assertCount(1, $posts[1]->comments);
+        self::assertSame('Grace', $posts[1]->comments[0]->post->title);
+    }
+
+    public function testJoinWithWhereCanReferenceJoinedTableName(): void
+    {
+        $post = OrmStatePost::find($this->connection)
+            ->joinWith(['comments'])
+            ->where([
+                ':tableName.`:pkName`' => 1
+            ])
+            ->andWhere(['comments.id' => 1])
+            ->one($this->connection);
+
+        self::assertNotNull($post);
+        self::assertCount(1, $this->selectQueries);
+        self::assertStringContainsString('jr__comments.id=:arg1', $this->selectQueries[0]);
+    }
+
+    public function testJoinWithWhereCanReferenceNestedRelationPath(): void
+    {
+        $post = OrmStatePost::find($this->connection)
+            ->joinWith(['comments.post'])
+            ->where([
+                ':tableName.`:pkName`' => 1
+            ])
+            ->andWhere(['comments.post.id' => 1])
+            ->one($this->connection);
+
+        self::assertNotNull($post);
+        self::assertCount(1, $this->selectQueries);
+        self::assertStringContainsString('jr__comments__post.id=:arg1', $this->selectQueries[0]);
+    }
+
     public function testToArrayBreaksCyclesByReturningNullOnRepeatedActiveRecord(): void
     {
         $post = new OrmStatePost([], [], $this->connection);
@@ -318,6 +453,57 @@ class ActiveRecordStateTest extends TestCase
         $connection->method('select')->willReturnCallback(function (string $sql): array {
             $this->selectQueries[] = $sql;
 
+            if (str_contains($sql, 'LEFT JOIN comments AS jr__comments')) {
+                $rows = [];
+
+                if (str_contains($sql, 'WHERE posts.`id`')) {
+                    $rows[] = [
+                        '__adg__root__id' => 1,
+                        '__adg__root__user_id' => 10,
+                        '__adg__root__title' => 'Ada',
+                        '__adg__comments__id' => 1,
+                        '__adg__comments__post_id' => 1,
+                        '__adg__comments__body' => 'first',
+                    ];
+
+                    if (str_contains($sql, 'LEFT JOIN posts AS jr__comments__post')) {
+                        $rows[0]['__adg__comments__post__id'] = 1;
+                        $rows[0]['__adg__comments__post__user_id'] = 10;
+                        $rows[0]['__adg__comments__post__title'] = 'Ada';
+                    }
+
+                    return $rows;
+                }
+
+                $rows[] = [
+                    '__adg__root__id' => 1,
+                    '__adg__root__user_id' => 10,
+                    '__adg__root__title' => 'Ada',
+                    '__adg__comments__id' => 1,
+                    '__adg__comments__post_id' => 1,
+                    '__adg__comments__body' => 'first',
+                ];
+                $rows[] = [
+                    '__adg__root__id' => 2,
+                    '__adg__root__user_id' => 11,
+                    '__adg__root__title' => 'Grace',
+                    '__adg__comments__id' => 2,
+                    '__adg__comments__post_id' => 2,
+                    '__adg__comments__body' => 'second',
+                ];
+
+                if (str_contains($sql, 'LEFT JOIN posts AS jr__comments__post')) {
+                    $rows[0]['__adg__comments__post__id'] = 1;
+                    $rows[0]['__adg__comments__post__user_id'] = 10;
+                    $rows[0]['__adg__comments__post__title'] = 'Ada';
+                    $rows[1]['__adg__comments__post__id'] = 2;
+                    $rows[1]['__adg__comments__post__user_id'] = 11;
+                    $rows[1]['__adg__comments__post__title'] = 'Grace';
+                }
+
+                return $rows;
+            }
+
             if (str_contains($sql, 'FROM posts')) {
                 if (str_contains($sql, 'WHERE posts.`id`')) {
                     return [[
@@ -360,7 +546,13 @@ class ActiveRecordStateTest extends TestCase
 
             throw new \RuntimeException('Unexpected select query: ' . $sql);
         });
-        $connection->method('insert')->willReturn(2);
+        $connection->method('insert')->willReturnCallback(function (string $sql, array $params = []): int {
+            $this->insertQueries[] = [
+                'sql' => $sql,
+                'params' => $params,
+            ];
+            return 2;
+        });
         $connection->method('update')->willReturnCallback(function (string $sql, array $params = []): int {
             $this->updateQueries[] = [
                 'sql' => $sql,
