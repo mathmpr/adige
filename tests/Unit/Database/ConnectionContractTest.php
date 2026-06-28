@@ -5,6 +5,7 @@ namespace Tests\Unit\Database;
 use Adige\core\database\Connection;
 use Adige\core\database\exceptions\CantConnectException;
 use Adige\core\database\exceptions\DefaultConnectionNotDefinedException;
+use PDO;
 use PHPUnit\Framework\TestCase;
 
 class ConnectionContractTest extends TestCase
@@ -57,6 +58,40 @@ class ConnectionContractTest extends TestCase
         );
     }
 
+    public function testCommitTransactionDoesNotCallPdoCommitWhenTransactionWasAutoClosed(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::never())->method('commit');
+        $pdo->method('inTransaction')->willReturn(false);
+
+        $connection = $this->makeConnectionDouble('stale', false);
+        $this->setPrivateProperty($connection, 'db', $pdo);
+        $this->setPrivateProperty($connection, 'inTransaction', true);
+        $this->setPrivateProperty($connection, 'transactionCaller', 'external');
+
+        $connection->commitTransaction();
+
+        self::assertFalse($this->getPrivateProperty($connection, 'inTransaction'));
+        self::assertNull($this->getPrivateProperty($connection, 'transactionCaller'));
+    }
+
+    public function testRollbackTransactionDoesNotCallPdoRollbackWhenTransactionWasAutoClosed(): void
+    {
+        $pdo = $this->createMock(PDO::class);
+        $pdo->expects(self::never())->method('rollBack');
+        $pdo->method('inTransaction')->willReturn(false);
+
+        $connection = $this->makeConnectionDouble('stale', false);
+        $this->setPrivateProperty($connection, 'db', $pdo);
+        $this->setPrivateProperty($connection, 'inTransaction', true);
+        $this->setPrivateProperty($connection, 'transactionCaller', 'external');
+
+        $connection->rollBackTransaction();
+
+        self::assertFalse($this->getPrivateProperty($connection, 'inTransaction'));
+        self::assertNull($this->getPrivateProperty($connection, 'transactionCaller'));
+    }
+
     private function makeConnectionDouble(string $name, bool $isDefault): Connection
     {
         $connection = $this->getMockBuilder(Connection::class)
@@ -75,5 +110,12 @@ class ConnectionContractTest extends TestCase
         $property = new \ReflectionProperty(Connection::class, $name);
         $property->setAccessible(true);
         $property->setValue($object, $value);
+    }
+
+    private function getPrivateProperty(object $object, string $name): mixed
+    {
+        $property = new \ReflectionProperty(Connection::class, $name);
+        $property->setAccessible(true);
+        return $property->getValue($object);
     }
 }

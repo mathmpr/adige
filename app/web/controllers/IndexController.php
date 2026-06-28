@@ -10,6 +10,8 @@ class IndexController extends BaseController
 {
     public function actionIndex()
     {
+        return $this->render('index');
+
         $ticket = Tickets::find()
             ->joinWith(['orders.transactions'])
             ->where(['id' => 1])

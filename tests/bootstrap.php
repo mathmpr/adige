@@ -11,6 +11,10 @@ foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(__DIR__ . 
         continue;
     }
 
+    if (str_contains($file->getPathname(), DIRECTORY_SEPARATOR . 'views' . DIRECTORY_SEPARATOR)) {
+        continue;
+    }
+
     require_once $file->getPathname();
 }
 

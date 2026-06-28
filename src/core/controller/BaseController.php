@@ -8,6 +8,7 @@ use Adige\core\BaseRequest;
 use Adige\core\BaseResponse;
 use Adige\core\routing\BaseRoute;
 use Adige\core\routing\Router;
+use RuntimeException;
 
 class BaseController extends BaseObject
 {
@@ -84,6 +85,14 @@ class BaseController extends BaseObject
     public function beforeAction($action)
     {
         
+    }
+
+    public function render(string $view, array $params = []): string
+    {
+        if (!Adige::$app->view)    {
+            throw new RuntimeException("View component is not configured in the application");
+        }
+        return Adige::$app->view->render($view, $params);
     }
 
 }

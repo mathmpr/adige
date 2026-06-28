@@ -177,11 +177,14 @@ class Connection extends BaseObject
 
     public function commitTransaction(): self
     {
-        if ($this->inTransaction) {
+        $this->syncTransactionState();
+
+        if ($this->inTransaction && $this->db?->inTransaction()) {
             $this->db->commit();
-            $this->inTransaction = false;
-            $this->transactionCaller = null;
         }
+
+        $this->inTransaction = false;
+        $this->transactionCaller = null;
 
         return $this;
     }
@@ -198,11 +201,14 @@ class Connection extends BaseObject
 
     public function rollBackTransaction(): self
     {
-        if ($this->inTransaction) {
+        $this->syncTransactionState();
+
+        if ($this->inTransaction && $this->db?->inTransaction()) {
             $this->db->rollBack();
-            $this->inTransaction = false;
-            $this->transactionCaller = null;
         }
+
+        $this->inTransaction = false;
+        $this->transactionCaller = null;
 
         return $this;
     }
@@ -242,6 +248,7 @@ class Connection extends BaseObject
         }
 
         $stmt->execute($args);
+        $this->syncTransactionState();
         $this->autoCommit();
 
         return $stmt;
@@ -268,6 +275,20 @@ class Connection extends BaseObject
         }
 
         return $this;
+    }
+
+    private function syncTransactionState(): void
+    {
+        if ($this->db === null) {
+            $this->inTransaction = false;
+            $this->transactionCaller = null;
+            return;
+        }
+
+        if (!$this->db->inTransaction()) {
+            $this->inTransaction = false;
+            $this->transactionCaller = null;
+        }
     }
 
     /**
