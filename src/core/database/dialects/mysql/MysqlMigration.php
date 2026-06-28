@@ -4,6 +4,7 @@ namespace Adige\core\database\dialects\mysql;
 
 use Adige\core\database\MigrationDialect;
 use Adige\core\database\MigrationField;
+use Adige\core\database\MigrationIndex;
 
 class MysqlMigration extends MigrationDialect
 {
@@ -46,7 +47,7 @@ class MysqlMigration extends MigrationDialect
         );
     }
 
-    public function createTable(string $table, array $fields): void
+    public function createTable(string $table, array $fields, array $indexes = []): void
     {
         $this->assertValidIdentifier($table);
 
@@ -58,6 +59,10 @@ class MysqlMigration extends MigrationDialect
                 implode(', ', $definitions)
             )
         );
+
+        foreach ($indexes as $index) {
+            $this->createIndex($table, $index);
+        }
     }
 
     public function dropTable(string $table): void
@@ -100,5 +105,34 @@ class MysqlMigration extends MigrationDialect
         }
 
         return implode(' ', $parts);
+    }
+
+    private function createIndex(string $table, MigrationIndex $index): void
+    {
+        $this->assertIndexDefinition($index);
+
+        $name = $index->getName() ?? $this->buildIndexName($table, $index->getColumns(), $index->isUnique());
+        $columns = implode(', ', array_map(
+            static fn (string $column): string => sprintf('`%s`', $column),
+            $index->getColumns()
+        ));
+
+        $this->connection->query(sprintf(
+            'CREATE %sINDEX `%s` ON `%s` (%s)',
+            $index->isUnique() ? 'UNIQUE ' : '',
+            $name,
+            $table,
+            $columns
+        ));
+    }
+
+    private function buildIndexName(string $table, array $columns, bool $unique): string
+    {
+        return sprintf(
+            '%s_%s_%s',
+            $table,
+            implode('_', $columns),
+            $unique ? 'uniq' : 'idx'
+        );
     }
 }

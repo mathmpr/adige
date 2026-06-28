@@ -42,12 +42,32 @@ class MigrationContractTest extends TestCase
             $migration->field('id')->integer()->autoIncrement(),
             $migration->field('title')->string(120)->notNull(),
             $migration->field('published')->boolean()->default(false),
+            $migration->index('title'),
+            $migration->index(['title', 'published'], 'posts_title_published_unique')->unique(),
         ]);
 
         self::assertSame([
             ["SELECT name FROM sqlite_master WHERE type='table' AND name = ?", ['posts']],
             ['CREATE TABLE "posts" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "title" VARCHAR(120) NOT NULL, "published" BOOLEAN DEFAULT 0)', []],
+            ['CREATE INDEX "posts_title_idx" ON "posts" ("title")', []],
+            ['CREATE UNIQUE INDEX "posts_title_published_unique" ON "posts" ("title", "published")', []],
         ], $queries);
+    }
+
+    public function testMigrationIndexSupportsFluentDefinition(): void
+    {
+        $migration = new class extends Migration {
+            public function up(): void {}
+            public function down(): void {}
+        };
+
+        $index = $migration->index(['title', 'published'])
+            ->name('posts_title_published_idx')
+            ->unique();
+
+        self::assertSame('posts_title_published_idx', $index->getName());
+        self::assertSame(['title', 'published'], $index->getColumns());
+        self::assertTrue($index->isUnique());
     }
 
     public function testAddColumnBuildsMysqlAlterTableStatement(): void

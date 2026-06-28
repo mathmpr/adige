@@ -22,7 +22,7 @@ abstract class MigrationDialect extends BaseObject
     abstract public function fieldExists(string $tableName, string $field): bool;
     abstract public function addColumn(string $table, MigrationField $field): void;
     abstract public function dropColumn(string $table, string $field): void;
-    abstract public function createTable(string $table, array $fields): void;
+    abstract public function createTable(string $table, array $fields, array $indexes = []): void;
     abstract public function dropTable(string $table): void;
 
     protected function assertValidIdentifier(string $identifier): void
@@ -36,6 +36,22 @@ abstract class MigrationDialect extends BaseObject
     {
         if ($field->getType() === null || trim($field->getType()) === '') {
             throw new RuntimeException("Field '{$field->getName()}' must define a type");
+        }
+    }
+
+    protected function assertIndexDefinition(MigrationIndex $index): void
+    {
+        $columns = $index->getColumns();
+        if ($columns === []) {
+            throw new RuntimeException('Index definitions must contain at least one column');
+        }
+
+        foreach ($columns as $column) {
+            $this->assertValidIdentifier($column);
+        }
+
+        if ($index->getName() !== null) {
+            $this->assertValidIdentifier($index->getName());
         }
     }
 

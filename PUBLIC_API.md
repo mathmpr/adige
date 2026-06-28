@@ -5,7 +5,7 @@ Este documento consolida a baseline pública do Adige após:
 - `0.0.2` estabilização do ORM
 - `0.0.3` cleanup do console legado
 - `0.0.4` events and lifecycle
-- `0.0.5` views and migrations
+- `0.0.5` views, migrations and validators
 
 Objetivo:
 - deixar explícito o que aplicações podem usar com expectativa razoável de compatibilidade
@@ -333,6 +333,10 @@ Comportamentos públicos estabilizados:
 - relações reutilizam a mesma conexão em eager e lazy loading
 - `where()` usa grupos lógicos recursivos e operadores explícitos
 - eager loading suporta caminhos aninhados por dot notation
+- `save()` valida o model antes de persistir por default
+- `save($connection, true)` permite skip explícito de validações
+- `validate()` executa as rules declaradas no model
+- erros de validação ficam disponíveis por `addError()`, `getErrors()`, `clearErrors()` e `hasErrors()`
 
 Eventos públicos de lifecycle:
 - `ActiveRecord::EVENT_BEFORE_INSERT`
@@ -351,11 +355,70 @@ Uso esperado:
 - listeners globais podem ser registrados por classe base ou concreta via [`src/core/events/Event.php`](/home/mathmpr/PhpstormProjects/adige/src/core/events/Event.php)
 - isso permite validar, auditar, transformar estado e produzir side effects ao redor do lifecycle do model
 
+### `ActiveRecord` validators
+
+Arquivos:
+- [src/core/database/validators/ValidatorInterface.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/validators/ValidatorInterface.php)
+- [src/core/database/validators/AbstractValidator.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/validators/AbstractValidator.php)
+- [src/core/database/validators](/home/mathmpr/PhpstormProjects/adige/src/core/database/validators)
+
+Contrato:
+- models podem declarar `rules(): array`
+- cada rule segue o formato geral:
+  - `[['field'], 'validator']`
+  - `[['field'], 'validator', 'namedParam' => 'value']`
+  - `[['field'], CustomValidator::class, ...$args]`
+- validators built-in e customizados compartilham o mesmo fluxo por `ValidatorInterface`
+
+Built-ins públicos estabilizados:
+- `required`
+- `boolean`
+- `integer`
+- `number`
+- `string`
+- `minLength`
+- `maxLength`
+- `in`
+- `compare`
+- `date`
+- `url`
+- `mask`
+- `email`
+- `unique`
+
+Aliases públicos suportados:
+- `bool`
+- `int`
+- `float`
+- `double`
+- `decimal`
+- `min_length`
+- `max_length`
+- `range`
+- `match`
+- `regex`
+- `regexp`
+- `datetime`
+
+Garantias:
+- validadores recebem o model, os fields, os params normalizados e a conexão opcional
+- `unique` suporta unicidade simples e composta
+- o formato composto de `targetAttribute` faz parte do contrato suportado, por exemplo:
+
+```php
+[['date', 'app'], 'unique', 'targetAttribute' => ['date', 'app'], 'message' => 'The combination of Date and App has already been taken.']
+```
+
+Uso esperado:
+- regras de negócio locais ao model devem viver em `rules()`
+- aplicações podem fornecer validators customizados por classe, desde que implementem `ValidatorInterface`
+
 ### `Migration`
 
 Arquivos:
 - [src/core/database/Migration.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/Migration.php)
 - [src/core/database/MigrationField.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/MigrationField.php)
+- [src/core/database/MigrationIndex.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/MigrationIndex.php)
 - [src/core/database/MigrationDialect.php](/home/mathmpr/PhpstormProjects/adige/src/core/database/MigrationDialect.php)
 
 Dialetos públicos de suporte:
@@ -374,6 +437,7 @@ Comportamentos públicos estabilizados:
 - `addColumn()`
 - `dropField()`
 - `field()` para criar `MigrationField`
+- `index()` para criar `MigrationIndex`
 - `executeUp()`
 - `executeDown()`
 - `MigrationField` expõe um builder fluente com:
@@ -389,6 +453,10 @@ Comportamentos públicos estabilizados:
   - `primary()`
   - `unique()`
   - `autoIncrement()`
+- `MigrationIndex` expõe um builder fluente com:
+  - `columns()`
+  - `name()`
+  - `unique()`
 
 Garantias:
 - a tabela de metadata `migrations` é garantida antes da execução
@@ -399,6 +467,8 @@ Garantias:
 - `executeUp()` roda migrations pendentes dentro do fluxo transacional do framework
 - `executeDown()` reverte pelo mesmo fluxo
 - o framework suporta MySQL e SQLite sem fallback silencioso também para migrations
+- `createTable()` aceita `MigrationField` e `MigrationIndex` no mesmo array de definição
+- índices simples e compostos são compilados de forma explícita para MySQL e SQLite
 
 Uso esperado:
 - migrações novas usam o formato:
@@ -418,6 +488,16 @@ return new class extends Migration {
 ```
 
 - aplicações podem configurar o path de discovery por `Adige::MIGRATIONS_CONFIG`
+- migrations podem definir índices, por exemplo:
+
+```php
+$this->createTable('posts', [
+    $this->field('id')->integer()->autoIncrement(),
+    $this->field('title')->string(120)->notNull(),
+    $this->index('title'),
+    $this->index(['title', 'published'], 'posts_title_published_unique')->unique(),
+]);
+```
 
 ### Console migrations
 

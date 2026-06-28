@@ -54,13 +54,25 @@ abstract class Migration extends BaseObject
             throw new \RuntimeException("Table '$table' must define at least one field.");
         }
 
+        $indexes = [];
+
         foreach ($fields as $field) {
+            if ($field instanceof MigrationIndex) {
+                $indexes[] = $field;
+                continue;
+            }
+
             if (!$field instanceof MigrationField) {
-                throw new \InvalidArgumentException('createTable() expects an array of MigrationField instances.');
+                throw new \InvalidArgumentException('createTable() expects MigrationField or MigrationIndex instances.');
             }
         }
 
-        $this->dialect()->createTable($table, $fields);
+        $columnFields = array_values(array_filter(
+            $fields,
+            static fn (mixed $field): bool => $field instanceof MigrationField
+        ));
+
+        $this->dialect()->createTable($table, $columnFields, $indexes);
         return $this;
     }
 
@@ -91,6 +103,11 @@ abstract class Migration extends BaseObject
     public function field(string $name): MigrationField
     {
         return new MigrationField($name);
+    }
+
+    public function index(array|string $columns, ?string $name = null): MigrationIndex
+    {
+        return new MigrationIndex($columns, $name);
     }
 
     public function executeUp(): self

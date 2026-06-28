@@ -5,6 +5,21 @@ namespace Adige\core\database;
 use Adige\core\BaseObject;
 use Adige\core\BaseException;
 use Adige\core\events\Observable;
+use Adige\core\database\validators\IntegerValidator;
+use Adige\core\database\validators\EmailValidator;
+use Adige\core\database\validators\BooleanValidator;
+use Adige\core\database\validators\CompareValidator;
+use Adige\core\database\validators\DateValidator;
+use Adige\core\database\validators\InValidator;
+use Adige\core\database\validators\MaskValidator;
+use Adige\core\database\validators\MaxLengthValidator;
+use Adige\core\database\validators\MinLengthValidator;
+use Adige\core\database\validators\NumberValidator;
+use Adige\core\database\validators\RequiredValidator;
+use Adige\core\database\validators\StringValidator;
+use Adige\core\database\validators\UniqueValidator;
+use Adige\core\database\validators\UrlValidator;
+use Adige\core\database\validators\ValidatorInterface;
 use Adige\helpers\Str;
 use Adige\core\collection\Collection;
 use Adige\core\database\dialects\mysql\MysqlQueryBuilder;
@@ -28,6 +43,8 @@ abstract class ActiveRecord extends BaseObject
 {
     use Observable;
 
+    const SAVE_IS_INSERT = 'insert';
+    const SAVE_IS_UPDATE = 'update';
     const EVENT_BEFORE_INSERT = 'beforeInsert';
     const EVENT_AFTER_INSERT = 'afterInsert';
     const EVENT_BEFORE_UPDATE = 'beforeUpdate';
@@ -58,6 +75,8 @@ abstract class ActiveRecord extends BaseObject
     private array $withSelects = [];
 
     private ?array $joinWithPlan = null;
+
+    private array $errors = [];
 
     private array $options;
 
@@ -92,6 +111,19 @@ abstract class ActiveRecord extends BaseObject
         }
         $this->load($props);
         parent::__construct();
+    }
+
+    public function rules(): array
+    {
+        return [];
+    }
+
+    public function beforeSave(string $saveType): void
+    {
+    }
+
+    public function afterSave(string $saveType): void
+    {
     }
 
     public function load(array $props = []): void
@@ -178,11 +210,16 @@ abstract class ActiveRecord extends BaseObject
      * @return bool
      * @throws BaseException
      */
-    public function save(?Connection $connection = null): bool
+    public function save(?Connection $connection = null, bool $skipValidation = false): bool
     {
         $connection = $this->resolveConnection($connection);
 
+        if (!$skipValidation && !$this->validate($connection)) {
+            return false;
+        }
+
         if ($this->isNewRecord()) {
+            $this->beforeSave(self::SAVE_IS_INSERT);
             $this->trigger(self::EVENT_BEFORE_INSERT);
             $pkName = $this->getPkNameValue($connection);
             $this->beginInsert($connection)
@@ -193,6 +230,7 @@ abstract class ActiveRecord extends BaseObject
             }
             $this->syncPersistedState();
             $this->trigger(self::EVENT_AFTER_INSERT);
+            $this->afterSave(self::SAVE_IS_INSERT);
             return true;
         }
 
@@ -201,6 +239,7 @@ abstract class ActiveRecord extends BaseObject
             return true;
         }
 
+        $this->beforeSave(self::SAVE_IS_UPDATE);
         $this->trigger(self::EVENT_BEFORE_UPDATE);
         $id = $pkName !== null && array_key_exists($pkName, $this->oldAttributes)
             ? $this->oldAttributes[$pkName]
@@ -214,7 +253,39 @@ abstract class ActiveRecord extends BaseObject
         $connection->update($this->getRawSql(), $this->getQueryBuilder()->getParams());
         $this->syncPersistedState();
         $this->trigger(self::EVENT_AFTER_UPDATE);
+        $this->afterSave(self::SAVE_IS_UPDATE);
         return true;
+    }
+
+    public function validate(?Connection $connection = null): bool
+    {
+        $this->clearErrors();
+
+        foreach ($this->rules() as $rule) {
+            $this->applyValidationRule($rule, $connection);
+        }
+
+        return !$this->hasErrors();
+    }
+
+    public function addError(string $field, string $message): void
+    {
+        $this->errors[$field][] = $message;
+    }
+
+    public function getErrors(): array
+    {
+        return $this->errors;
+    }
+
+    public function clearErrors(): void
+    {
+        $this->errors = [];
+    }
+
+    public function hasErrors(): bool
+    {
+        return !empty($this->errors);
     }
 
     /**
@@ -349,7 +420,7 @@ abstract class ActiveRecord extends BaseObject
             $objects = $this->hydrateJoinedRows($result, $connection);
             if ($this->as_array) {
                 return array_map(
-                    static fn (ActiveRecord $model): array => $model->toArray(),
+                    static fn(ActiveRecord $model): array => $model->toArray(),
                     $objects
                 );
             }
@@ -737,10 +808,11 @@ abstract class ActiveRecord extends BaseObject
     }
 
     protected function hasManyRelation(
-        string $relatedModelClass,
-        string $foreignKey,
+        string  $relatedModelClass,
+        string  $foreignKey,
         ?string $localKey = null
-    ): RelationDefinition {
+    ): RelationDefinition
+    {
         return new RelationDefinition(
             RelationDefinition::TYPE_MANY,
             $relatedModelClass,
@@ -751,10 +823,11 @@ abstract class ActiveRecord extends BaseObject
     }
 
     protected function hasOneRelation(
-        string $relatedModelClass,
-        string $foreignKey,
+        string  $relatedModelClass,
+        string  $foreignKey,
         ?string $localKey = null
-    ): RelationDefinition {
+    ): RelationDefinition
+    {
         return new RelationDefinition(
             RelationDefinition::TYPE_ONE,
             $relatedModelClass,
@@ -865,7 +938,7 @@ abstract class ActiveRecord extends BaseObject
         }
 
         $paths = $this->getWithPaths($this->buildWithTree($this->with));
-        usort($paths, static fn (string $left, string $right): int => strlen($right) <=> strlen($left));
+        usort($paths, static fn(string $left, string $right): int => strlen($right) <=> strlen($left));
 
         foreach ($selects as $key => $select) {
             if (!is_string($select)) {
@@ -1162,13 +1235,103 @@ abstract class ActiveRecord extends BaseObject
         };
     }
 
+    private function applyValidationRule(mixed $rule, ?Connection $connection = null): void
+    {
+        if (!is_array($rule) || !isset($rule[0], $rule[1])) {
+            throw new BaseException('Each validation rule must define fields and a validator.');
+        }
+
+        $fields = is_array($rule[0]) ? $rule[0] : [$rule[0]];
+        $fields = array_values(array_filter(
+            $fields,
+            static fn (mixed $field): bool => is_string($field) && trim($field) !== ''
+        ));
+
+        if ($fields === []) {
+            throw new BaseException('Validation rules must target at least one field.');
+        }
+
+        $validator = $this->resolveValidator($rule[1]);
+        $validator->validate($this, $fields, $this->normalizeRuleParams($rule), $connection);
+    }
+
+    private function resolveValidator(mixed $validator): ValidatorInterface
+    {
+        if ($validator instanceof ValidatorInterface) {
+            return $validator;
+        }
+
+        if (is_string($validator)) {
+            $builtIn = $this->createBuiltInValidator($validator);
+            if ($builtIn !== null) {
+                return $builtIn;
+            }
+
+            if (class_exists($validator)) {
+                $instance = new $validator();
+                if ($instance instanceof ValidatorInterface) {
+                    return $instance;
+                }
+            }
+        }
+
+        throw new BaseException('Unsupported validator definition: ' . get_debug_type($validator));
+    }
+
+    private function createBuiltInValidator(string $name): ?ValidatorInterface
+    {
+        return match (strtolower(trim($name))) {
+            'required' => new RequiredValidator(),
+            'boolean', 'bool' => new BooleanValidator(),
+            'integer', 'int' => new IntegerValidator(),
+            'number', 'float', 'double', 'decimal' => new NumberValidator(),
+            'string' => new StringValidator(),
+            'minlength', 'min_length' => new MinLengthValidator(),
+            'maxlength', 'max_length' => new MaxLengthValidator(),
+            'in', 'range' => new InValidator(),
+            'compare' => new CompareValidator(),
+            'date', 'datetime' => new DateValidator(),
+            'url' => new UrlValidator(),
+            'mask', 'match', 'regex', 'regexp' => new MaskValidator(),
+            'email' => new EmailValidator(),
+            'unique' => new UniqueValidator(),
+            default => null,
+        };
+    }
+
+    private function normalizeRuleParams(array $rule): array
+    {
+        $params = [];
+        $args = [];
+
+        foreach ($rule as $key => $value) {
+            if ($key === 0 || $key === 1) {
+                continue;
+            }
+
+            if (is_int($key)) {
+                $args[] = $value;
+                continue;
+            }
+
+            $params[$key] = $value;
+        }
+
+        if ($args !== []) {
+            $params['args'] = $args;
+        }
+
+        return $params;
+    }
+
     private function eagerLoadRelation(
-        array $objects,
-        string $relationName,
+        array              $objects,
+        string             $relationName,
         RelationDefinition $definition,
-        ?Connection $connection = null,
-        ?string $relationPath = null
-    ): void {
+        ?Connection        $connection = null,
+        ?string            $relationPath = null
+    ): void
+    {
         $relationPath ??= $relationName;
 
         if (isset($this->withSelects[$relationPath])) {
@@ -1217,8 +1380,8 @@ abstract class ActiveRecord extends BaseObject
 
     private function materializeDefinedRelation(
         RelationDefinition $definition,
-        string $relationName,
-        ?string $relationPath = null
+        string             $relationName,
+        ?string            $relationPath = null
     ): mixed
     {
         $relationPath ??= $relationName;
@@ -1322,13 +1485,14 @@ abstract class ActiveRecord extends BaseObject
     }
 
     private function appendJoinWithNodes(
-        array &$nodes,
-        array $tree,
+        array        &$nodes,
+        array        $tree,
         ActiveRecord $parentModel,
-        array $parentNode,
-        Connection $connection,
-        string $prefix = ''
-    ): void {
+        array        $parentNode,
+        Connection   $connection,
+        string       $prefix = ''
+    ): void
+    {
         foreach ($tree as $relationName => $children) {
             $path = $prefix === '' ? $relationName : $prefix . '.' . $relationName;
 
@@ -1433,7 +1597,7 @@ abstract class ActiveRecord extends BaseObject
     private function buildJoinCommands(array $nodes): array
     {
         return array_map(
-            static fn (array $node): array => [
+            static fn(array $node): array => [
                 'type' => $node['joinType'],
                 'join' => [$node['joinTable'], $node['joinCondition']],
             ],
@@ -1520,7 +1684,7 @@ abstract class ActiveRecord extends BaseObject
     {
         $pkName = $node['pkName'] ?? null;
         if ($pkName !== null && array_key_exists($pkName, $data) && $data[$pkName] !== null) {
-            return (string) $data[$pkName];
+            return (string)$data[$pkName];
         }
 
         return serialize($data);
@@ -1611,11 +1775,12 @@ abstract class ActiveRecord extends BaseObject
     }
 
     private function populateRelationTree(
-        array $objects,
-        array $tree,
+        array       $objects,
+        array       $tree,
         ?Connection $connection = null,
-        string $prefix = ''
-    ): void {
+        string      $prefix = ''
+    ): void
+    {
         if (empty($objects) || empty($tree)) {
             return;
         }
@@ -1644,11 +1809,12 @@ abstract class ActiveRecord extends BaseObject
     }
 
     private function populateLegacyRelation(
-        array $objects,
-        string $relationName,
+        array       $objects,
+        string      $relationName,
         ?Connection $connection = null,
-        string $relationPath = ''
-    ): void {
+        string      $relationPath = ''
+    ): void
+    {
         foreach ($objects as $object) {
             $call = $object->{$relationName}();
 
