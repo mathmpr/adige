@@ -46,6 +46,7 @@ class InstallControllerTest extends TestCase
         self::assertStringContainsString("__DIR__ . '/vendor/autoload.php'", $contents);
         self::assertStringContainsString('Adige::run(null, __DIR__);', $contents);
         self::assertStringNotContainsString("../vendor/autoload.php", $contents);
+        self::assertStringNotContainsString('_composer_autoload_path', $contents);
     }
 
     public function testInstallFailsWhenLauncherAlreadyExists(): void
