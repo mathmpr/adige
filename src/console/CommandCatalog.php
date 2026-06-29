@@ -2,6 +2,7 @@
 
 namespace Adige\console;
 
+use Adige\core\Adige;
 use Adige\helpers\Str;
 use ReflectionClass;
 use ReflectionMethod;
@@ -171,7 +172,7 @@ class CommandCatalog
      */
     protected function discoverControllerClassesFromClassMap(): array
     {
-        $classMap = ROOT . 'vendor/composer/autoload_classmap.php';
+        $classMap = Adige::vendorDir() . 'composer' . DIRECTORY_SEPARATOR . 'autoload_classmap.php';
         if (!is_file($classMap)) {
             return [];
         }
@@ -384,7 +385,7 @@ class CommandCatalog
      */
     protected function getPsr4Mappings(): array
     {
-        $autoloadPsr4 = ROOT . 'vendor/composer/autoload_psr4.php';
+        $autoloadPsr4 = Adige::vendorDir() . 'composer' . DIRECTORY_SEPARATOR . 'autoload_psr4.php';
         if (!is_file($autoloadPsr4)) {
             return [];
         }

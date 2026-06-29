@@ -1,0 +1,13 @@
+#!/usr/bin/env php
+<?php
+
+use Composer\Autoload\ClassLoader;
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!class_exists(ClassLoader::class) && is_file($autoload)) {
+    require_once $autoload;
+}
+
+use Adige\core\Adige;
+
+Adige::run(null, getcwd());

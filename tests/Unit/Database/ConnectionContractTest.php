@@ -6,8 +6,10 @@ use Adige\core\database\Connection;
 use Adige\core\database\exceptions\CantConnectException;
 use Adige\core\database\exceptions\DefaultConnectionNotDefinedException;
 use PDO;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\TestCase;
 
+#[AllowMockObjectsWithoutExpectations]
 class ConnectionContractTest extends TestCase
 {
     protected function tearDown(): void

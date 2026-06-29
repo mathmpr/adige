@@ -8,8 +8,10 @@ use Adige\core\database\Schema;
 use Adige\core\database\validators\ValidatorInterface;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\TestCase;
 
+#[AllowMockObjectsWithoutExpectations]
 class ActiveRecordValidationTest extends TestCase
 {
     private array $insertQueries = [];

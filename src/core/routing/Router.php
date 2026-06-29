@@ -14,6 +14,7 @@ use Adige\core\http\http\exceptions\NotImplemented;
 use Adige\core\http\http\exceptions\RouteNotFound;
 use Adige\helpers\Str;
 use ReflectionException;
+use RuntimeException;
 
 
 class Router extends BaseObject
@@ -77,6 +78,8 @@ class Router extends BaseObject
      */
     private function autoDiscoverController(): ?Route
     {
+        $this->assertAutoDiscoverNamespacesConfigured();
+
         $uri = $this->request->getUriParts();
         if (empty($uri)) {
             return $this->buildDefaultRoute($uri);
@@ -325,81 +328,18 @@ class Router extends BaseObject
 
     protected function getAutoDiscoverControllerNamespaces(): array
     {
-        $namespaces = $this->controllerNamespaces;
-        $derivedNamespace = $this->deriveControllerNamespaceFromApplicationRoot();
-
-        if ($derivedNamespace !== null) {
-            array_unshift($namespaces, $derivedNamespace);
-        }
-
-        return array_values(array_unique(array_filter($namespaces)));
+        return array_values(array_unique(array_filter($this->controllerNamespaces)));
     }
 
-    protected function deriveControllerNamespaceFromApplicationRoot(): ?string
+    protected function assertAutoDiscoverNamespacesConfigured(): void
     {
-        $applicationRoot = $this->getApplicationRoot();
-        if ($applicationRoot === null) {
-            return null;
+        if ($this->getAutoDiscoverControllerNamespaces() !== []) {
+            return;
         }
 
-        $controllersDirectory = rtrim($applicationRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'controllers';
-        if (!is_dir($controllersDirectory)) {
-            return null;
-        }
-
-        foreach ($this->getPsr4Mappings() as $namespace => $directory) {
-            $baseDirectory = rtrim($directory, DIRECTORY_SEPARATOR);
-            $normalizedControllersDirectory = str_replace('\\', '/', realpath($controllersDirectory) ?: $controllersDirectory);
-            $normalizedBaseDirectory = str_replace('\\', '/', realpath($baseDirectory) ?: $baseDirectory);
-
-            if (!str_starts_with($normalizedControllersDirectory, $normalizedBaseDirectory)) {
-                continue;
-            }
-
-            $relativePath = trim(substr($normalizedControllersDirectory, strlen($normalizedBaseDirectory)), '/');
-            $relativeNamespace = str_replace('/', '\\', $relativePath);
-
-            return trim($namespace, '\\') . (!empty($relativeNamespace) ? '\\' . $relativeNamespace : '');
-        }
-
-        return null;
-    }
-
-    protected function getApplicationRoot(): ?string
-    {
-        if (defined('APP_ROOT')) {
-            return realpath(APP_ROOT) ?: APP_ROOT;
-        }
-
-        $scriptFilename = $_SERVER['SCRIPT_FILENAME'] ?? null;
-        if (is_string($scriptFilename) && $scriptFilename !== '') {
-            return dirname($scriptFilename);
-        }
-
-        return null;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    protected function getPsr4Mappings(): array
-    {
-        $composerJson = ROOT . 'composer.json';
-        if (!is_file($composerJson)) {
-            return [];
-        }
-
-        $decoded = json_decode(file_get_contents($composerJson), true);
-        if (!is_array($decoded)) {
-            return [];
-        }
-
-        $mappings = [];
-        foreach (($decoded['autoload']['psr-4'] ?? []) as $namespace => $directory) {
-            $mappings[trim($namespace, '\\')] = ROOT . trim($directory, '/\\');
-        }
-
-        return $mappings;
+        throw new RuntimeException(
+            'Controller autodiscovery requires explicit controllerNamespaces configuration.'
+        );
     }
 
     /**

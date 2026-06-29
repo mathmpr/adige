@@ -3,6 +3,7 @@
 namespace Adige\core\http\socket;
 
 use Adige\cli\Output;
+use Adige\core\Adige;
 use Adige\core\BaseEnvironment;
 use Adige\core\BaseObject;
 
@@ -53,7 +54,12 @@ class Server extends BaseObject
     {
         Output::green("Server started at http://" . $this->host . ":" . $this->port . "\n")
             ->output();
-        exec('php -S ' . $this->host . ':' . $this->port . ' -t ' . ROOT . $this->documentRoot);
+        exec(sprintf(
+            'php -S %s:%s -t %s',
+            $this->host,
+            $this->port,
+            escapeshellarg($this->resolveDocumentRoot())
+        ));
     }
 
     /**
@@ -113,5 +119,21 @@ class Server extends BaseObject
         }
         return $port;
     }
-}
 
+    private function resolveDocumentRoot(): string
+    {
+        if ($this->isAbsolutePath((string) $this->documentRoot)) {
+            return (string) $this->documentRoot;
+        }
+
+        return rtrim(Adige::basePath(), DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR
+            . ltrim((string) $this->documentRoot, DIRECTORY_SEPARATOR);
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        return str_starts_with($path, DIRECTORY_SEPARATOR)
+            || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1;
+    }
+}

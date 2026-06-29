@@ -77,19 +77,16 @@ class App extends BaseObject
             ? [
                 'Adige\\console\\controllers',
             ]
-            : [
-                'app\\controllers',
-            ];
+            : [];
     }
 
     private function bootstrap(): array
     {
         $directories = [
-            ROOT,
-            APP_ROOT
+            Adige::basePath(),
         ];
         $bootstrap = [];
-        foreach ($directories as $directory) {
+        foreach (array_values(array_unique($directories)) as $directory) {
             if (BaseEnvironment::isConsoleApp() && str_ends_with($directory, 'web')) {
                 continue;
             }
