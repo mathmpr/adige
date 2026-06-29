@@ -6,8 +6,10 @@ use Adige\core\database\Connection;
 use Adige\core\database\Schema;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\TestCase;
 
+#[AllowMockObjectsWithoutExpectations]
 class SchemaContractTest extends TestCase
 {
     protected function setUp(): void

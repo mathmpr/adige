@@ -10,8 +10,10 @@ use Adige\core\database\RelationDefinition;
 use Adige\core\database\Schema;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\TestCase;
 
+#[AllowMockObjectsWithoutExpectations]
 class ActiveRecordStateTest extends TestCase
 {
     private Connection $connection;

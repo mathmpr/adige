@@ -1,23 +1,29 @@
 # Ádige
-Project aimed at studying the PHP and MySQL languages mainly, which can cover JS, HTML, CSS. The objective is to create, step by step, a simple Framework based on the most popular ones on the market.
+
+Adige is a small PHP framework with a focused core around:
+- HTTP and console request handling
+- explicit routing with controller autodiscovery
+- a lightweight `ActiveRecord` ORM
+- file-based views
+- migrations and model validation
 
 ## About
 
 Adige is the second-largest river in Italy, it was and still is one of the most important rivers in the country since the Middle Ages. The river gives its name to the Trentino-Alto Adige region. The name of the project is just a tribute to the memories of a trip that one of the collaborators (@mathmpr) took to this region of Italy.
 
-## Stabilization target
+## Release target
 
-The current stabilization target is `0.0.1`.
+The current release target is `1.0.0-alpha`.
 
-At this stage, Adige can be described as a stabilized microframework for the `0.0.1` line:
+At this stage, Adige can be described as a stabilized microframework for the current line:
 - small and focused
-- tested around its HTTP core, router, middleware and response flow
+- tested around its HTTP core, console flow, ORM, migrations and validation layer
 - suitable for small, controlled and serious projects
 
 Important scope note:
 - Adige is not positioned as a general replacement for large, battle-tested frameworks
-- the current `0.0.1` scope is best suited for small applications, internal tools, simple APIs and controlled production environments
-- the ORM layer is still less mature than the HTTP/kernel core
+- the current scope is best suited for small applications, internal tools, simple APIs and controlled production environments
+- the package baseline is now aligned for the `1.0.0-alpha` distribution model
 
 Public API and compatibility notes for this target are documented in:
 - [PUBLIC_API.md](/home/mathmpr/PhpstormProjects/adige/PUBLIC_API.md)
@@ -56,15 +62,181 @@ Let's try to use git in a professional way, for this we will establish some rule
    - [x] Study how a **query builder** [ORM](https://www.treinaweb.com.br/blog/o-que-e-orm) works
    - [x] Implement a query builder.
 
-## Project structure and startup
+## Installation
 
-Composer.json was added to the root of the project to allow autoloading of the system classes we are going to build. Read the README.md inside the /src folder for more details.
+Install the package in a consumer project with Composer:
 
-To start the project with composer you need to download composer. To do this, enter the root folder of this project and then execute the commands below available [on this page](https://getcomposer.org/download/).
+```bash
+composer require trentino-alto/adige
+```
 
-If everything goes well, the root of the project will have the file `composer.phar`.
+The package exposes its console entrypoint through Composer bin proxies:
 
-Run the following commands in this order: `php composer.phar install` and then `php composer.phar dump-autoload`.
+```bash
+vendor/bin/adige
+```
+
+This is the main command entrypoint of the framework.
+
+## Package consumption
+
+Adige is now distributed as a Composer library.
+
+The important runtime paths are:
+- `package root`: where the framework code itself lives
+- `vendor dir`: the consumer project's Composer `vendor/`
+- `basePath`: the consumer project root
+
+The console launcher already passes the project root automatically:
+
+```php
+Adige::run(null, getcwd());
+```
+
+If you start the framework manually, pass the consumer base path explicitly:
+
+```php
+use Adige\core\Adige;
+
+Adige::run(null, __DIR__);
+```
+
+## Minimal web consumer
+
+Example project structure:
+
+```text
+my-app/
+├── bootstrap.php
+├── public/
+│   └── index.php
+├── controllers/
+│   └── IndexController.php
+└── composer.json
+```
+
+Example `composer.json` for the consumer project:
+
+```json
+{
+  "require": {
+    "trentino-alto/adige": "1.0.0-alpha"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": ""
+    }
+  }
+}
+```
+
+Example `bootstrap.php`:
+
+```php
+<?php
+
+use Adige\core\Adige;
+use Adige\core\App;
+use Adige\core\BaseView;
+
+return [
+    Adige::VIEW_HANDLER => [
+        'class' => BaseView::class,
+        '__construct()' => [
+            __DIR__ . '/views',
+        ],
+    ],
+    Adige::ROUTER_HANDLER => [
+        'class' => Adige\core\routing\Router::class,
+        '__construct()' => [
+            '@request',
+            '@response',
+            true,
+            'index',
+        ],
+        'controllerNamespaces' => [
+            'App\\controllers',
+        ],
+    ],
+];
+```
+
+Example `public/index.php`:
+
+```php
+<?php
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Adige\core\Adige;
+
+Adige::run(null, dirname(__DIR__));
+```
+
+Example `controllers/IndexController.php`:
+
+```php
+<?php
+
+namespace App\controllers;
+
+use Adige\core\controller\BaseController;
+
+class IndexController extends BaseController
+{
+    public function actionIndex(): string
+    {
+        return 'Hello from Adige';
+    }
+}
+```
+
+## Minimal console consumer
+
+Once the package is installed, console commands run from the project root:
+
+```bash
+vendor/bin/adige
+vendor/bin/adige migrate/create --name=create-users-table
+vendor/bin/adige migrate/up
+```
+
+The recommended command flow is:
+- use `vendor/bin/adige` as the primary framework command
+- use it to start the built-in PHP server
+- use it to create and run migrations
+- use it to generate the optional project-root launcher
+
+Examples:
+
+```bash
+vendor/bin/adige server/start
+vendor/bin/adige migrate/create --name=create-users-table
+vendor/bin/adige migrate/up
+vendor/bin/adige install/index
+```
+
+If you want a project-root launcher, generate one after installation:
+
+```bash
+vendor/bin/adige install/index
+```
+
+That command creates `./adige` in the consumer project root and the generated file resolves:
+- `./vendor/autoload.php`
+- `Adige::run(null, __DIR__)`
+
+The generated `./adige` file is an optional shortcut.
+It does not replace `vendor/bin/adige` as the official package entrypoint.
+
+## Configuration notes
+
+The current package defaults are intentionally small:
+- console controllers default to `Adige\console\controllers`
+- web controller autodiscovery should be configured explicitly through `controllerNamespaces`
+- bootstrap files are discovered from the consumer `basePath`
+- migrations default to `<basePath>/migrations`
+- `.env` is loaded from the consumer `basePath` first
 
 ## Tests
 
@@ -88,3 +260,4 @@ Current tests focus on framework contracts such as:
 - middleware short-circuit and failure handling
 - response normalization
 - HTTP request/response behavior without a real web server
+- migrations, validators and package/runtime path behavior

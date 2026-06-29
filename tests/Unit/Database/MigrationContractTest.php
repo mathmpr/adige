@@ -7,9 +7,11 @@ use Adige\core\database\Migration;
 use Adige\core\database\MigrationField;
 use PDO;
 use PDOStatement;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
+#[AllowMockObjectsWithoutExpectations]
 class MigrationContractTest extends TestCase
 {
     public function testMigrationFieldSupportsFluentColumnDefinition(): void

@@ -6,8 +6,8 @@ use Adige\core\controller\exceptions\ControllerClassNotExists;
 use Adige\core\controller\exceptions\RequiredParamNotFound;
 use Adige\core\http\http\exceptions\NotImplemented;
 use ReflectionException;
-use Throwable;
 use RuntimeException;
+use Throwable;
 
 class Adige extends BaseObject
 {
@@ -27,24 +27,22 @@ class Adige extends BaseObject
 
     protected static ?ExceptionHandler $exceptionHandler = null;
 
+    protected static ?string $basePath = null;
+
+    protected static ?string $vendorDir = null;
+
     public static App|null $app = null;
 
     public static function loadEnv(): void
     {
-        if (!defined('ROOT')) {
-            throw new RuntimeException('ROOT constant is not defined.');
-        }
-
-        if (!defined('APP_ROOT')) {
-            define('APP_ROOT', ROOT);
-        }
+        static::ensurePathConstants();
 
         $envs = [
-            ROOT . '.env',
-            APP_ROOT . '.env',
+            static::basePath() . '.env',
+            static::packageRoot() . '.env',
         ];
 
-        foreach ($envs as $env) {
+        foreach (array_values(array_unique($envs)) as $env) {
             if (file_exists($env)) {
                 BaseEnvironment::readEnv($env);
             }
@@ -72,8 +70,12 @@ class Adige extends BaseObject
      * @throws ReflectionException
      * @throws RequiredParamNotFound
      */
-    public static function run(?string $appClass = null): void
+    public static function run(?string $appClass = null, ?string $basePath = null): void
     {
+        if ($basePath !== null) {
+            static::setBasePath($basePath);
+        }
+
         static::commons();
 
         $appClass = $appClass ?: static::$appClass;
@@ -104,6 +106,54 @@ class Adige extends BaseObject
         return new $appClass();
     }
 
+    public static function setBasePath(string $basePath): void
+    {
+        $normalized = rtrim(trim($basePath), DIRECTORY_SEPARATOR);
+        if ($normalized === '') {
+            throw new RuntimeException('Base path must not be empty.');
+        }
+
+        static::$basePath = $normalized . DIRECTORY_SEPARATOR;
+    }
+
+    public static function basePath(): string
+    {
+        if (static::$basePath === null) {
+            static::$basePath = static::resolveDefaultBasePath();
+        }
+
+        return static::$basePath;
+    }
+
+    public static function packageRoot(): string
+    {
+        return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
+    }
+
+    public static function vendorDir(): string
+    {
+        if (static::$vendorDir !== null) {
+            return static::$vendorDir;
+        }
+
+        foreach (static::searchPathAncestors(static::packageRoot()) as $directory) {
+            $composerDirectory = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'composer';
+            if (is_file($composerDirectory . DIRECTORY_SEPARATOR . 'autoload_psr4.php')) {
+                static::$vendorDir = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+                return static::$vendorDir;
+            }
+
+            $vendorDirectory = rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'vendor';
+            if (is_file($vendorDirectory . DIRECTORY_SEPARATOR . 'composer' . DIRECTORY_SEPARATOR . 'autoload_psr4.php')) {
+                static::$vendorDir = rtrim($vendorDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+                return static::$vendorDir;
+            }
+        }
+
+        static::$vendorDir = static::packageRoot() . 'vendor' . DIRECTORY_SEPARATOR;
+        return static::$vendorDir;
+    }
+
     public static function exceptionHandler(): ExceptionHandler
     {
         if (static::$exceptionHandler === null) {
@@ -111,5 +161,71 @@ class Adige extends BaseObject
         }
 
         return static::$exceptionHandler;
+    }
+
+    protected static function ensurePathConstants(): void
+    {
+        if (!defined('ROOT')) {
+            define('ROOT', static::packageRoot());
+        }
+
+        if (!defined('APP_ROOT')) {
+            define('APP_ROOT', static::basePath());
+        }
+    }
+
+    protected static function resolveDefaultBasePath(): string
+    {
+        if (defined('APP_ROOT')) {
+            return static::normalizePathConstant(APP_ROOT);
+        }
+
+        if (defined('BASE_PATH')) {
+            return static::normalizePathConstant(BASE_PATH);
+        }
+
+        $envBasePath = getenv('ADIGE_BASE_PATH');
+        if (is_string($envBasePath) && trim($envBasePath) !== '') {
+            return static::normalizePathConstant($envBasePath);
+        }
+
+        $vendorDirectory = static::vendorDir();
+        if (is_dir($vendorDirectory)) {
+            return dirname(rtrim($vendorDirectory, DIRECTORY_SEPARATOR)) . DIRECTORY_SEPARATOR;
+        }
+
+        $workingDirectory = getcwd();
+        if (is_string($workingDirectory) && $workingDirectory !== '') {
+            return rtrim($workingDirectory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+        }
+
+        return static::packageRoot();
+    }
+
+    protected static function normalizePathConstant(string $path): string
+    {
+        $realPath = realpath($path);
+        return rtrim($realPath !== false ? $realPath : $path, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected static function searchPathAncestors(string $path): array
+    {
+        $ancestors = [];
+        $current = rtrim($path, DIRECTORY_SEPARATOR);
+
+        while ($current !== '') {
+            $ancestors[] = $current;
+            $parent = dirname($current);
+            if ($parent === $current) {
+                break;
+            }
+
+            $current = $parent;
+        }
+
+        return $ancestors;
     }
 }

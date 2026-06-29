@@ -3,6 +3,7 @@
 namespace Tests\Unit\Routing;
 
 use Adige\core\routing\Route;
+use RuntimeException;
 use Tests\Support\RouterTestCase;
 
 class RouterAutoDiscoverTest extends RouterTestCase
@@ -68,6 +69,17 @@ class RouterAutoDiscoverTest extends RouterTestCase
         $result = $this->runRouter('/health/controller', 'PATCH');
 
         self::assertSame(['fixture' => 'admin-controller-login'], $result);
+    }
+
+    public function testAutoDiscoverRequiresExplicitControllerNamespaces(): void
+    {
+        $router = $this->createRouter('/admin');
+        $router->setControllerNamespaces([]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Controller autodiscovery requires explicit controllerNamespaces configuration.');
+
+        $router->run();
     }
 
 }

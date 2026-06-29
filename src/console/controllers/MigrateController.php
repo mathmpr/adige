@@ -100,7 +100,7 @@ class MigrateController extends BaseController
 
     protected function migrationPath(): string
     {
-        return rtrim($this->migrationConfig()['path'] ?? ROOT . 'migrations', DIRECTORY_SEPARATOR);
+        return rtrim($this->migrationConfig()['path'] ?? Adige::basePath() . 'migrations', DIRECTORY_SEPARATOR);
     }
 
     /**
