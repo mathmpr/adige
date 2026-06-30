@@ -3,12 +3,13 @@
 namespace Adige\core\collection;
 
 use Adige\core\BaseObject;
-use Iterator;
+use ArrayIterator;
 use ArrayAccess;
 use Countable;
-use Adige\core\database\ActiveRecord;
+use IteratorAggregate;
+use Traversable;
 
-class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
+class Collection extends BaseObject implements IteratorAggregate, ArrayAccess, Countable
 {
     private ?int $position = null;
 
@@ -19,13 +20,6 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
     private array $objectOffsets = [];
 
     private array $arrayOffsets = [];
-    /**
-     * if during use of a collection you use unset inside an loop using next() method, the next call of next() cant use native next($this->collection) because
-     * when unset() is used in a literal array, the internal pointer of this array changed to next position automatically
-     * @var $unset bool
-     */
-    private bool $unset = false;
-
     /**
      * @param array $collection
      *
@@ -208,12 +202,15 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
                 }
             }
             unset($this->collection[$offset]);
-            $this->unset = true;
             if (array_key_exists($offset, $this->objectOffsets)) {
                 unset($this->objectOffsets[$offset]);
             }
             if (array_key_exists($offset, $this->arrayOffsets)) {
                 unset($this->arrayOffsets[$offset]);
+            }
+
+            if ($this->position !== null && $this->position >= $this->count()) {
+                $this->position = max(0, $this->count() - 1);
             }
         }
     }
@@ -224,11 +221,11 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     function valid(): bool
     {
-        $pos = $this->offsetExists($this->position);
-        if (!$pos) {
-            $this->rewind();
-        }
-        return $pos;
+        $keys = $this->iterationKeys();
+
+        return $this->position !== null
+            && $this->position >= 0
+            && $this->position < count($keys);
     }
 
     /**
@@ -237,7 +234,13 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     function key(): mixed
     {
-        return $this->offset(key($this->collection));
+        $keys = $this->iterationKeys();
+
+        if (!$this->valid()) {
+            return null;
+        }
+
+        return $this->offset($keys[$this->position]);
     }
 
     /**
@@ -246,13 +249,12 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     public function next(): void
     {
-        if ($this->unset) {
-            $next = current($this->collection);
-            $this->unset = false;
-        } else {
-            $next = next($this->collection);
+        if ($this->position === null) {
+            $this->position = 0;
+            return;
         }
-        $this->position = key($this->collection);
+
+        $this->position++;
     }
 
     /**
@@ -261,13 +263,14 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     public function prev(): mixed
     {
-        $prev = prev($this->collection);
-        $this->position = key($this->collection);
-        if ($prev) {
-            return $prev;
-        } else {
+        if ($this->position === null || $this->position <= 0) {
+            $this->position = 0;
             return false;
         }
+
+        $this->position--;
+
+        return $this->current() ?: false;
     }
 
     /**
@@ -276,7 +279,13 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     public function current(): mixed
     {
-        return current($this->collection);
+        $keys = $this->iterationKeys();
+
+        if (!$this->valid()) {
+            return false;
+        }
+
+        return $this->collection[$keys[$this->position]] ?? false;
     }
 
     /**
@@ -284,8 +293,7 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
      */
     public function rewind(): void
     {
-        reset($this->collection);
-        $this->position = key($this->collection);
+        $this->position = 0;
     }
 
     /**
@@ -326,7 +334,7 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
     public function end(): string|int|null|array|object|bool
     {
         $key = $this->lastKey();
-        if ($key) {
+        if ($key !== null) {
             return $this->offsetGet($key);
         }
         return false;
@@ -339,7 +347,7 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
     public function begin(): string|int|null|array|object|bool
     {
         $key = $this->firstKey();
-        if ($key) {
+        if ($key !== null) {
             return $this->offsetGet($key);
         }
         return false;
@@ -377,6 +385,19 @@ class Collection extends BaseObject implements Iterator, ArrayAccess, Countable
             }
         }
         return $array;
+    }
+
+    public function getIterator(): Traversable
+    {
+        return new ArrayIterator($this->collection);
+    }
+
+    /**
+     * @return array<int, int|string>
+     */
+    private function iterationKeys(): array
+    {
+        return array_keys($this->collection);
     }
 
 }

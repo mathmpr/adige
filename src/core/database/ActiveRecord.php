@@ -2,6 +2,7 @@
 
 namespace Adige\core\database;
 
+use Adige\core\Adige;
 use Adige\core\BaseObject;
 use Adige\core\BaseException;
 use Adige\core\events\Observable;
@@ -889,12 +890,15 @@ abstract class ActiveRecord extends BaseObject
 
     private function resolveConnection(?Connection $connection = null): Connection
     {
-        return $connection ?? $this->runtimeConnection ?? Connection::getDefaultConnection();
+        return $connection
+            ?? $this->runtimeConnection
+            ?? $this->resolveAppConnection()
+            ?? Connection::getDefaultConnection();
     }
 
     private function canResolveSchemaMetadata(?Connection $connection = null): bool
     {
-        if ($connection !== null || $this->runtimeConnection !== null) {
+        if ($connection !== null || $this->runtimeConnection !== null || $this->resolveAppConnection() !== null) {
             return true;
         }
 
@@ -910,6 +914,17 @@ abstract class ActiveRecord extends BaseObject
     {
         return empty($this->attributes)
             && empty($this->oldAttributes);
+    }
+
+    private function resolveAppConnection(): ?Connection
+    {
+        if (Adige::$app === null) {
+            return null;
+        }
+
+        $connection = Adige::$app->{Adige::DB_HANDLER} ?? null;
+
+        return $connection instanceof Connection ? $connection : null;
     }
 
     private function assignLoadedAttributes(array $props = []): void

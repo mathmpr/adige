@@ -36,4 +36,30 @@ class CollectionContractTest extends TestCase
 
         self::assertNull($collection->name);
     }
+
+    public function testNestedForeachKeepsIndependentIterationState(): void
+    {
+        $collection = Collection::factory(['a', 'b', 'c']);
+        $pairs = [];
+
+        foreach ($collection as $outer) {
+            foreach ($collection as $inner) {
+                $pairs[] = $outer . $inner;
+            }
+        }
+
+        self::assertSame([
+            'aa', 'ab', 'ac',
+            'ba', 'bb', 'bc',
+            'ca', 'cb', 'cc',
+        ], $pairs);
+    }
+
+    public function testBeginAndEndWorkWhenCollectionStartsAtZeroIndex(): void
+    {
+        $collection = Collection::factory(['first', 'second']);
+
+        self::assertSame('first', $collection->begin());
+        self::assertSame('second', $collection->end());
+    }
 }
